@@ -1,5 +1,8 @@
+from src import start_crawler
+
+
 def main():
-    print("Hello from feedx!")
+    start_crawler()
 
 
 if __name__ == "__main__":
