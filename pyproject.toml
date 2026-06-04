@@ -6,4 +6,8 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "appwrite>=19.2.0",
+    "scout",
 ]
+
+[tool.uv.sources]
+scout = { git = "https://github.com/ArnabChatterjee20k/Scout.git" }

@@ -4,8 +4,8 @@ from datetime import datetime
 
 from pydantic import BaseModel
 from appwrite.client import Client
+from appwrite.enums.tables_db_index_type import TablesDBIndexType
 from appwrite.services.tables_db import TablesDB
-from appwrite.id import ID
 
 
 class AppwriteSchemaBuilder:
@@ -49,12 +49,12 @@ class AppwriteSchemaBuilder:
         fields_for_index = []
 
         for field_name, field_info in model.model_fields.items():
-            annotation = field_info.annotation
+            annotation = self._unwrap_optional(field_info.annotation)
             meta = field_info.json_schema_extra or {}
 
             indexed = meta.get("indexed", False)
             unique = meta.get("unique", False)
-            required = meta.get("required", True)
+            required = field_info.is_required()
 
             attr_type = self._resolve_type(annotation)
 
@@ -95,7 +95,7 @@ class AppwriteSchemaBuilder:
                 table_id=collection_id,
                 name=name,
                 permissions=[],
-                document_security=False,
+                row_security=False,
             )
 
             print(f"✓ Collection created: {collection_id}")
@@ -116,42 +116,41 @@ class AppwriteSchemaBuilder:
     ):
         try:
             if attr_type == "string":
-                self.databases.create_string_attribute(
+                self.databases.create_string_column(
                     database_id=self.database_id,
-                    collection_id=collection_id,
+                    table_id=collection_id,
                     key=field_name,
-                    size=5000,
                     required=required,
                 )
 
             elif attr_type == "integer":
-                self.databases.create_integer_attribute(
+                self.databases.create_integer_column(
                     database_id=self.database_id,
-                    collection_id=collection_id,
+                    table_id=collection_id,
                     key=field_name,
                     required=required,
                 )
 
             elif attr_type == "float":
-                self.databases.create_float_attribute(
+                self.databases.create_float_column(
                     database_id=self.database_id,
-                    collection_id=collection_id,
+                    table_id=collection_id,
                     key=field_name,
                     required=required,
                 )
 
             elif attr_type == "boolean":
-                self.databases.create_boolean_attribute(
+                self.databases.create_boolean_column(
                     database_id=self.database_id,
-                    collection_id=collection_id,
+                    table_id=collection_id,
                     key=field_name,
                     required=required,
                 )
 
             elif attr_type == "datetime":
-                self.databases.create_datetime_attribute(
+                self.databases.create_datetime_column(
                     database_id=self.database_id,
-                    collection_id=collection_id,
+                    table_id=collection_id,
                     key=field_name,
                     required=required,
                 )
@@ -162,20 +161,19 @@ class AppwriteSchemaBuilder:
                     for item in annotation
                 ]
 
-                self.databases.create_enum_attribute(
+                self.databases.create_enum_column(
                     database_id=self.database_id,
-                    collection_id=collection_id,
+                    table_id=collection_id,
                     key=field_name,
                     elements=enum_values,
                     required=required,
                 )
 
             elif attr_type == "array":
-                self.databases.create_string_attribute(
+                self.databases.create_string_column(
                     database_id=self.database_id,
-                    collection_id=collection_id,
+                    table_id=collection_id,
                     key=field_name,
-                    size=1000,
                     array=True,
                     required=required,
                 )
@@ -207,10 +205,10 @@ class AppwriteSchemaBuilder:
         try:
             self.databases.create_index(
                 database_id=self.database_id,
-                collection_id=collection_id,
+                table_id=collection_id,
                 key=f"{field_name}_idx",
-                type="unique" if unique else "key",
-                attributes=[field_name],
+                type=TablesDBIndexType.UNIQUE if unique else TablesDBIndexType.KEY,
+                columns=[field_name],
             )
 
             print(f"✓ Index: {field_name}")
@@ -239,16 +237,14 @@ class AppwriteSchemaBuilder:
 
         origin = get_origin(annotation)
 
+        if origin is list:
+            return "array"
+
         if origin is not None:
-            args = get_args(annotation)
+            args = [arg for arg in get_args(annotation) if arg is not type(None)]
 
-            # Optional[T]
-            if origin is type(None):
-                annotation = args[0]
-
-            # list[str]
-            if origin is list:
-                return "array"
+            if len(args) == 1:
+                return self._resolve_type(args[0])
 
         annotation_str = str(annotation).lower()
 
@@ -274,3 +270,16 @@ class AppwriteSchemaBuilder:
             return "array"
 
         return "unknown"
+
+    def _unwrap_optional(self, annotation):
+        origin = get_origin(annotation)
+
+        if origin is None:
+            return annotation
+
+        args = [arg for arg in get_args(annotation) if arg is not type(None)]
+
+        if len(args) == 1:
+            return args[0]
+
+        return annotation
