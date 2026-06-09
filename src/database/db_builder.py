@@ -33,7 +33,7 @@ class AppwriteSchemaBuilder:
             builder.create_collection_from_dict(
                 {
                     "id": "urls",
-                    "name": "Urls",
+                    "name": "URL",
                     "fields": [
                         {
                             "name": "url",

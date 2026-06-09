@@ -1,7 +1,7 @@
 from enum import Enum
 from datetime import datetime
 from typing import Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_core import PydanticUndefined
 
 
@@ -49,7 +49,7 @@ class Sources(BaseModel):
     is_active: bool = DBField(default=True, indexed=True)
 
 
-class Hostnames(BaseModel):
+class Hostname(BaseModel):
     name: str = DBField(indexed=True, unique=True)
 
     last_crawled_at: datetime | None = DBField(default=None, indexed=True)
@@ -64,7 +64,7 @@ class Hostnames(BaseModel):
     success_count: int = DBField(default=0)
 
 
-class Urls(BaseModel):
+class URL(BaseModel):
     url: str = DBField(indexed=True, unique=True)
 
     hostname: str = DBField(indexed=True)
@@ -82,6 +82,13 @@ class Urls(BaseModel):
     last_crawl_at: datetime | None = DBField(default=None)
 
     crawl_run_id: str | None = DBField(default=None, indexed=True)
+
+    @field_validator("crawl_state", mode="before")
+    @classmethod
+    def _coerce_crawl_state(cls, value):
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+        return value
 
 
 class Content(BaseModel):
@@ -102,6 +109,13 @@ class Content(BaseModel):
     crawl_run_id: str | None = DBField(default=None, indexed=True)
     pipeline_state: ContentPipelineState = DBField(indexed=True)
     pipeline_error: str | None = DBField(default=None)
+
+    @field_validator("pipeline_state", mode="before")
+    @classmethod
+    def _coerce_pipeline_state(cls, value):
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+        return value
 
 
 class CrawlRun(BaseModel):
