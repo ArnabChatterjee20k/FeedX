@@ -2,7 +2,7 @@ from enum import Enum
 import os
 from typing import Any, get_args, get_origin
 
-from .models import Sources, Hostname, URL, Content, CrawlRun
+from .models import Hostname, URL, Content, CrawlRun
 from .db_builder import AppwriteSchemaBuilder
 from appwrite.client import Client
 from pydantic_core import PydanticUndefined
@@ -92,7 +92,7 @@ def _create_schema_builder() -> AppwriteSchemaBuilder:
 
 def init_database():
     db = _create_schema_builder()
-    for model in [Sources, Hostname, URL, Content, CrawlRun]:
+    for model in [Hostname, URL, Content, CrawlRun]:
         db.create_collection_from_dict(_model_to_collection_schema(model))
 
 

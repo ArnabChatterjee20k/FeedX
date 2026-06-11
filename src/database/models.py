@@ -44,11 +44,6 @@ class ContentPipelineState(Enum):
     FAILED = 6
 
 
-class Sources(BaseModel):
-    url: str = DBField(indexed=True, unique=True)
-    is_active: bool = DBField(default=True, indexed=True)
-
-
 class Hostname(BaseModel):
     name: str = DBField(indexed=True, unique=True)
 
@@ -77,6 +72,7 @@ class URL(BaseModel):
 
     depth: int = DBField(default=0)
 
+    # will not be None and will be set to a date due to db optimisations
     next_crawl_at: datetime | None = DBField(default=None, indexed=True)
 
     last_crawl_at: datetime | None = DBField(default=None)
