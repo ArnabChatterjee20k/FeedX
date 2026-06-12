@@ -5,11 +5,7 @@ from appwrite.query import Query
 from datetime import datetime, timezone
 from scout.logger import get_logger
 import os
-
-
-class URLRow(URL):
-    id: str
-    sequence: int
+from .models import URLRow
 
 
 class FrontQueue:
@@ -19,8 +15,11 @@ class FrontQueue:
         self._logger = get_logger("FRONT_QUEUE")
 
     def init(self) -> None:
-        self._queue.extend(self._get_all_urls())
-        print(self._queue)
+        try:
+            self._queue.extend(self._get_all_urls())
+            self._logger.info(f"Init queue of {len(self._queue)}", tag="INIT")
+        except Exception as e:
+            self._logger.error("Error during init", tag="INIT", error=e)
 
     def push(self, urls: list[URL]) -> bool:
         try:
@@ -44,18 +43,8 @@ class FrontQueue:
 
     def pop(self) -> URL | None:
         item = self._queue.popleft()
-        try:
-            database = get_database()
-            # not externally marking the crawl state as fetching as its the responsbility of the fetcher
-            row = {**item.model_dump(), "crawl_state": item.crawl_state.value}
-            database.update_row(
-                APPWRITE_DATABASE_ID, table_id=URL.__name__, row_id=item.id, data=row
-            )
-            self._logger.info(f"Popped url {item.id}", tag="POP")
-        except Exception as e:
-            # here in front queue if item isn't updated we can leave it
-            self._logger.error(f"Error popping url {item.id}", tag="POP", error=e)
-            self._queue.append(item)
+        self._logger.info(f"Popped url {item.id}", tag="POP")
+        return item
 
     def _get_all_urls(self) -> list[URL]:
         database = get_database()
