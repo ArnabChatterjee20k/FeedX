@@ -13,7 +13,10 @@ class SchedulerQueue:
 
     def init(self, hostnames: list[str]):
         try:
-            self._queue = heapq.heapify(self._get_hostname_items(hostnames))
+            hostnames = self._get_hostname_items(hostnames)
+            heapq.heapify(hostnames)
+            self._queue.extend(hostnames)
+
             self._logger.info(f"Pushed {len(hostnames)} urls", tag="INIT")
         except Exception as e:
             self._logger.error(f"Error", tag="INIT", error=e)
@@ -22,6 +25,8 @@ class SchedulerQueue:
         heapq.heappush(self._queue, item)
 
     def pop(self):
+        if not self._queue:
+            return None
         return heapq.heappop(self._queue)
 
     def _get_hostname_items(self, hostnames: list[str]):

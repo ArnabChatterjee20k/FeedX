@@ -21,4 +21,6 @@ class BackQueue:
             self._queues[hostname] = deque([url])
 
     def pop(self, hostname):
+        if hostname not in self._queues or not self._queues[hostname]:
+            return None
         return self._queues[hostname].popleft()

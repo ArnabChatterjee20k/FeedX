@@ -42,6 +42,8 @@ class FrontQueue:
             return False
 
     def pop(self) -> URL | None:
+        if not self._queue:
+            return None
         item = self._queue.popleft()
         self._logger.info(f"Popped url {item.id}", tag="POP")
         return item
