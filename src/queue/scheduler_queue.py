@@ -4,6 +4,7 @@ from ..database import get_database, APPWRITE_DATABASE_ID
 from ..database.models import Hostname
 from appwrite.query import Query
 from scout.logger import get_logger
+from datetime import datetime, timezone
 
 
 class SchedulerQueue:
@@ -33,6 +34,9 @@ class SchedulerQueue:
         database = get_database()
         queries = [
             Query.equal("name", hostnames),
+            Query.less_than_equal(
+                "next_crawl_at", datetime.now(timezone.utc).isoformat()
+            ),
             Query.select(["name", "next_allowed_at"]),
         ]
         rows = database.list_rows(APPWRITE_DATABASE_ID, Hostname.__name__, queries)
