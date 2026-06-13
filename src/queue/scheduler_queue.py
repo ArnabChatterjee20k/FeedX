@@ -5,9 +5,10 @@ from ..database.models import Hostname
 from appwrite.query import Query
 from scout.logger import get_logger
 from datetime import datetime, timezone
+from . import Queue
 
 
-class SchedulerQueue:
+class SchedulerQueue(Queue):
     def __init__(self):
         self._queue: list[SchedulerQueueItem] = []
         self._logger = get_logger("SchedulerQueue")

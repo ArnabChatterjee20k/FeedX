@@ -6,9 +6,10 @@ from datetime import datetime, timezone
 from scout.logger import get_logger
 import os
 from .models import URLRow
+from . import Queue
 
 
-class FrontQueue:
+class FrontQueue(Queue):
     def __init__(self):
         # not using priority score for now, so using a normal deque and not a priority queue
         self._queue: deque[URLRow] = deque()

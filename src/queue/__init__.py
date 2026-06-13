@@ -1,15 +1,37 @@
-from typing import Protocol
+from abc import ABC, abstractmethod
 from .front_queue import FrontQueue
+from .back_queue import BackQueue
+from .scheduler_queue import SchedulerQueue
 
 
-class Queue(Protocol):
-    def init(self) -> None: ...
+class Queue(ABC):
+    @abstractmethod
+    def init(self): ...
 
-    def push(self) -> None: ...
+    @abstractmethod
+    def push(self): ...
 
-    def pop(self) -> None: ...
+    @abstractmethod
+    def pop(self): ...
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        item = self.pop()
+        if not item:
+            raise StopIteration
+        return item
 
 
 def init_queues():
     front_queue = FrontQueue()
     front_queue.init()
+
+    back_queue = BackQueue()
+    back_queue.init(list(front_queue))
+
+    scheduler_queue = SchedulerQueue()
+    scheduler_queue.init(back_queue.get_hostnames())
+
+    return front_queue, back_queue, scheduler_queue

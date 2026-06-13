@@ -1,9 +1,10 @@
 from collections import deque
 from scout.logger import get_logger
 from .models import URLRow
+from . import Queue
 
 
-class BackQueue:
+class BackQueue(Queue):
     def __init__(self):
         self._queues: dict[str, deque[URLRow]] = {}
         self._logger = get_logger("BACK_QUEUE")
@@ -24,3 +25,6 @@ class BackQueue:
         if hostname not in self._queues or not self._queues[hostname]:
             return None
         return self._queues[hostname].popleft()
+
+    def get_hostnames(self) -> list[str]:
+        return list(self._queues.keys())
