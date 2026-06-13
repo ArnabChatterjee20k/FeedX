@@ -1,11 +1,12 @@
 from .database import init_database
 from .queue import init_queues
-from uuid import uuid4
 from dotenv import load_dotenv
+from .workers.crawl_worker import WorkerPool
 
 
-def start_crawler():
+async def start_crawler():
     load_dotenv(".env")
-    # init_database()
-    init_queues()
-    crawl_id = str(uuid4())
+    init_database()
+    _, back_queue, scheduler_queue = init_queues()
+    pool = WorkerPool(back_queue, scheduler_queue, 2)
+    await pool.start()
