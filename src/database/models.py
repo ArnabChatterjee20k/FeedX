@@ -96,6 +96,8 @@ class Content(BaseModel):
 
     summary: str = DBField()
 
+    chunks: list[str] = DBField(default=[])
+
     tags: list[str] = DBField(default=[])
 
     score: float = DBField(default=0, indexed=True)
