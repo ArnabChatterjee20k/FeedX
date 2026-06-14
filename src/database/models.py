@@ -92,9 +92,10 @@ class Content(BaseModel):
 
     hostname: str = DBField(indexed=True)
 
+    # ideally a simhash shall be used with bucket approach
     hash: str = DBField(indexed=True)
 
-    summary: str = DBField()
+    summary: str | None = DBField()
 
     chunks: list[str] = DBField(default=[])
 

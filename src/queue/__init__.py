@@ -1,7 +1,4 @@
 from abc import ABC, abstractmethod
-from .front_queue import FrontQueue
-from .back_queue import BackQueue
-from .scheduler_queue import SchedulerQueue
 
 
 class Queue(ABC):
@@ -25,6 +22,10 @@ class Queue(ABC):
 
 
 def init_queues():
+    from .front_queue import FrontQueue
+    from .back_queue import BackQueue
+    from .scheduler_queue import SchedulerQueue
+
     front_queue = FrontQueue()
     front_queue.init()
 

@@ -6,7 +6,7 @@ from .workers.crawl_worker import WorkerPool
 
 async def start_crawler():
     load_dotenv(".env")
-    init_database()
+    # init_database()
     _, back_queue, scheduler_queue = init_queues()
     pool = WorkerPool(back_queue, scheduler_queue, 2)
     await pool.start()
