@@ -95,6 +95,7 @@ class SchedulerQueue(Queue):
         rows = database.list_rows(APPWRITE_DATABASE_ID, Hostname.__name__, queries)
         return [
             SchedulerQueueItem(
+                id=row.id,
                 hostname=row.model_dump().get("name"),
                 next_allowed_at=row.model_dump().get("next_allowed_at"),
             )

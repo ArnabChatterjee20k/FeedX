@@ -15,9 +15,11 @@ class HostnameRow(Hostname):
 class SchedulerQueueItem:
     def __init__(
         self,
+        id: str,
         hostname: str,
         next_allowed_at: datetime | None,
     ):
+        self.id = id
         self.hostname = hostname
         self.next_allowed_at = (
             next_allowed_at
