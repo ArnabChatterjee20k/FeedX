@@ -32,3 +32,5 @@ Github actions trigger the jobs automatically or using the cli to run this manua
 │                             ▼                                   │
 │                    Generate HTML → Push to gh-pages             │
 └─────────────────────────────────────────────────────────────────┘
+
+TODO: Make sure to guard via auth so that randomly requests can't get created

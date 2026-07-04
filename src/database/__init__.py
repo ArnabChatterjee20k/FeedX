@@ -5,6 +5,8 @@ from typing import Any, get_args, get_origin
 from .models import Hostname, URL, Content, CrawlRun
 from .db_builder import AppwriteSchemaBuilder
 from appwrite.client import Client
+from appwrite.permission import Permission
+from appwrite.role import Role
 from pydantic_core import PydanticUndefined
 
 APPWRITE_ENDPOINT = os.environ.get("APPWRITE_ENDPOINT")
@@ -98,3 +100,7 @@ def init_database():
 
 def get_database():
     return _create_schema_builder().get_database()
+
+
+def get_read_all_permission():
+    return Permission.read(Role.any())
