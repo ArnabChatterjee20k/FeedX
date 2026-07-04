@@ -92,8 +92,17 @@ class Content(BaseModel):
 
     hostname: str = DBField(indexed=True)
 
-    # ideally a simhash shall be used with bucket approach
-    hash: str = DBField(indexed=True)
+    # exact similarity matching
+    # hash: str = DBField(indexed=True)
+
+    # direct simhash match
+    simhash: int = DBField(indexed=True)
+
+    # dividing the 64 bits simhash into 4 * 16 bits to query by or and then doing the hamming distance on the application level
+    simhash_1: int = DBField(indexed=True)
+    simhash_2: int = DBField(indexed=True)
+    simhash_3: int = DBField(indexed=True)
+    simhash_4: int = DBField(indexed=True)
 
     summary: str | None = DBField()
 

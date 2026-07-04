@@ -1,7 +1,7 @@
 from .database import init_database
 from .queue import init_queues
 from dotenv import load_dotenv
-from .workers.crawl_worker import WorkerPool
+from .workers.worker_pool import WorkerPool
 
 
 async def start_crawler():

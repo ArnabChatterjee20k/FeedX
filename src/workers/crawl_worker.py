@@ -1,21 +1,22 @@
 import asyncio
-from scout.scout import Scout, BrowserManagerConfig
+from scout.scout import Scout
 from ..queue.back_queue import BackQueue
-from ..queue.scheduler_queue import SchedulerQueue, SchedulerQueueItem
+from ..queue.scheduler_queue import SchedulerQueue
 from scout.logger import get_logger
 from scout.core import CrawlConfig, ScrollingRule, VirtualScrollConfig, Document
 from ..database import get_database, APPWRITE_DATABASE_ID
 from appwrite.query import Query
 from ..database.models import CrawlState, URL, Content, ContentPipelineState, Hostname
-from hashlib import md5
 import os, random, re
 from datetime import datetime
 from appwrite.operator import Operator
+from domdistill.chunker import HTMLIntentChunker
+from domdistill.simhash import get_similarity
 
 crawl_id = os.environ.get("CRAWL_ID")
 
 
-class Worker:
+class CrawlWorker:
     def __init__(
         self, id, scout: Scout, back_queue: BackQueue, scheduler_queue: SchedulerQueue
     ):
@@ -100,41 +101,26 @@ class Worker:
                     filter(lambda document: isinstance(document, Document), documents)
                 )
                 hashes = {
-                    document.url: md5(document.to_markdown().encode()).hexdigest()
+                    document.url: HTMLIntentChunker(document.html)
+                    .get_fingerprint()
+                    .document_hash
                     for document in documents
                 }
                 result: tuple[list[str], None | Exception] = await asyncio.to_thread(
-                    self._check_existing_content_hashes, list(hashes.keys())
+                    self._check_existing_content_hashes, hashes
                 )
-                existing_hashes, err = result
+
+                duplicate_urls, err = result
                 if err:
                     self._logger.error(
                         f"Failed to check contents from url {url.id}, saving to database and depending on the unique index",
                         tag="CHECK_CONTENTS_EXIST",
                         error=err,
                     )
-                # filtering out existing documents, keeping only new ones
+                # filtering out duplicates, keeping only new documents
                 documents = list(
                     filter(
-                        lambda document: (
-                            hashes.get(document.url) not in existing_hashes
-                        ),
-                        documents,
-                    )
-                )
-                non_existing_url_hashes, err = result
-                if err:
-                    self._logger.error(
-                        f"Failed to check contents from url {url.id}, saving to database and depending on the unique index",
-                        tag="CHECK_CONTENTS_EXIST",
-                        error=err,
-                    )
-                # filtering non existing from the documents
-                documents = list(
-                    filter(
-                        lambda document: (
-                            hashes.get(document.url) not in non_existing_url_hashes
-                        ),
+                        lambda document: document.url not in duplicate_urls,
                         documents,
                     )
                 )
@@ -151,12 +137,17 @@ class Worker:
                 contents = []
                 for idx, chunks in enumerate(results):
                     document = documents[idx]
-                    hash = hashes.get(document.url)
+                    simhash = hashes.get(document.url)
+                    simhash_chunks = self._extract_simhash_chunks(simhash)
                     contents.append(
                         Content(
-                            url=url.url,
-                            hostname=url.hostname,
-                            hash=hash,
+                            url=document.url,
+                            hostname=document.url.split("/")[2],
+                            simhash=simhash,
+                            simhash_1=simhash_chunks[0],
+                            simhash_2=simhash_chunks[1],
+                            simhash_3=simhash_chunks[2],
+                            simhash_4=simhash_chunks[3],
                             chunks=chunks,
                             scraped_at=datetime.now(),
                             pipeline_state=ContentPipelineState.PENDING,
@@ -166,14 +157,14 @@ class Worker:
                 retry = 0
 
                 while not chunks_created and retry < 5:
-                    chunks_created = await asyncio.to_thread(
-                        self._create_chunks(contents)
+                    chunks_created, chunk_err = await asyncio.to_thread(
+                        self._create_chunks, contents
                     )
                     if not chunks_created:
                         self._logger.error(
                             f"Failed to create chunks for url {url.id}, Retry Count {retry}",
-                            tag="UPDATE_STATE",
-                            error=err,
+                            tag="CREATE_CHUNKS",
+                            error=chunk_err,
                         )
                         retry += 1
                         await asyncio.sleep(1 * (retry + 1))
@@ -324,52 +315,79 @@ class Worker:
         except Exception as e:
             return False, e
 
+    def _extract_simhash_chunks(self, simhash: int) -> list[int]:
+        return [
+            simhash & 0xFFFF,
+            (simhash >> 16) & 0xFFFF,
+            (simhash >> 32) & 0xFFFF,
+            (simhash >> 48) & 0xFFFF,
+        ]
+
     def _check_existing_content_hashes(
-        self, hashes
-    ) -> tuple[dict[str, str], None | Exception]:
+        self, hashes: dict[str, int]
+    ) -> tuple[list[str], None | Exception]:
         try:
             database = get_database()
+
+            all_simhashes = list(hashes.values())
+            all_chunk_1 = []
+            all_chunk_2 = []
+            all_chunk_3 = []
+            all_chunk_4 = []
+            for simhash in hashes.values():
+                chunks = self._extract_simhash_chunks(simhash)
+                all_chunk_1.append(chunks[0])
+                all_chunk_2.append(chunks[1])
+                all_chunk_3.append(chunks[2])
+                all_chunk_4.append(chunks[3])
+
             rows = database.list_rows(
                 APPWRITE_DATABASE_ID,
                 Content.__name__,
-                queries=[Query.equal("hash", hashes), Query.select(["hash"])],
+                queries=[
+                    Query.or_queries(
+                        [
+                            Query.equal("simhash", all_simhashes),
+                            Query.equal("simhash_1", all_chunk_1),
+                            Query.equal("simhash_2", all_chunk_2),
+                            Query.equal("simhash_3", all_chunk_3),
+                            Query.equal("simhash_4", all_chunk_4),
+                        ]
+                    ),
+                    Query.select(["simhash", "url"]),
+                ],
                 total="false",
             )
-            rows = list(map(lambda row: row.model_dump().get("hash"), rows.rows))
-            return rows, None
+
+            existing_simhash_to_urls: dict[int, list[str]] = {}
+            for row in rows.rows:
+                row_data = row.model_dump()
+                existing_simhash = row_data.get("simhash")
+                existing_url = row_data.get("url")
+                if existing_simhash not in existing_simhash_to_urls:
+                    existing_simhash_to_urls[existing_simhash] = []
+                existing_simhash_to_urls[existing_simhash].append(existing_url)
+
+            duplicate_urls = []
+            for doc_url, doc_simhash in hashes.items():
+                for existing_simhash in existing_simhash_to_urls:
+                    if doc_simhash == existing_simhash:
+                        duplicate_urls.append(doc_url)
+                        break
+                    similarity = get_similarity(doc_simhash, existing_simhash)
+                    if similarity > 0.6:
+                        duplicate_urls.append(doc_url)
+                        break
+
+            return duplicate_urls, None
         except Exception as e:
             return [], e
 
-    def _create_chunks(self, contents: list[Content]):
+    def _create_chunks(self, contents: list[Content]) -> tuple[bool, None | Exception]:
         try:
             database = get_database()
             contents = list(map(lambda content: content.model_dump(), contents))
             database.create_rows(APPWRITE_DATABASE_ID, Content.__name__, rows=contents)
-            return True
+            return True, None
         except Exception as e:
-            return False
-
-
-class WorkerPool:
-    def __init__(
-        self, back_queue: BackQueue, scheduler_queue: SchedulerQueue, workers=1
-    ):
-        self._back_queue = back_queue
-        self._scheduler_queue = scheduler_queue
-        self._scout = Scout(browser_config=BrowserManagerConfig(headless=True))
-        self._workers_count = workers
-        self._worker_tasks: list[tuple[Worker, asyncio.Task]] = []
-        self._logger = get_logger(f"WorkerPool")
-
-    async def start(self):
-        self._logger.info(f"Starting Workers {self._workers_count}", tag="START")
-        # sharing the same browser instance so that multiple browsers aren't started
-        async with self._scout.start() as scout:
-            for i in range(self._workers_count):
-                worker = Worker(i + 1, scout, self._back_queue, self._scheduler_queue)
-                self._worker_tasks.append((worker, asyncio.create_task(worker.start())))
-
-    async def stop(self):
-        for worker, task in self._worker_tasks:
-            await worker.stop()
-            task.cancel()
+            return False, e
