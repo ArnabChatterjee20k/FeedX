@@ -34,3 +34,6 @@ Github actions trigger the jobs automatically or using the cli to run this manua
 └─────────────────────────────────────────────────────────────────┘
 
 TODO: Make sure to guard via auth so that randomly requests can't get created
+At every run the queues are formed
+API -> just for content ingestion and data output
+CLI -> to replicate the scheduler environment locally

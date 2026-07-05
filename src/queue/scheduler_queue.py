@@ -77,7 +77,7 @@ class SchedulerQueue(Queue):
             # releasing lock so that the item isn't blocked
             if delay > timeout:
                 return None
-            asyncio.sleep(delay)
+            await asyncio.sleep(delay)
             return item_for_the_current_worker
 
         except asyncio.TimeoutError:
@@ -88,7 +88,7 @@ class SchedulerQueue(Queue):
         queries = [
             Query.equal("name", hostnames),
             Query.less_than_equal(
-                "next_crawl_at", datetime.now(timezone.utc).isoformat()
+                "next_allowed_at", datetime.now(timezone.utc).isoformat()
             ),
             Query.select(["name", "next_allowed_at"]),
         ]
