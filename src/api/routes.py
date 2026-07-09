@@ -4,6 +4,7 @@ from ..database.models import URL, Hostname, CrawlState
 from .models import SourceRequest, SourceResponse, SourceListRequest, SourceListReponse
 from urllib.parse import urlsplit
 import asyncio
+from datetime import datetime, timezone
 from functools import wraps
 from typing import TypeVar, ParamSpec, Callable, cast, Annotated
 from collections.abc import Coroutine
@@ -39,6 +40,7 @@ async def create_source(body: SourceRequest):
         url=body.url, hostname=hostname_str, crawl_state=CrawlState.QUEUED.value
     ).model_dump()
     url_data["crawl_state"] = str(CrawlState.QUEUED.value)
+    url_data["next_crawl_at"] = datetime.now(timezone.utc).isoformat()
     hostname_data = Hostname(name=hostname_str).model_dump()
 
     def _create_hostnames() -> dict:
