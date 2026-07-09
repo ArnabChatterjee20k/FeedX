@@ -53,7 +53,7 @@ class Hostname(BaseModel):
 
     crawl_delay_seconds: float = DBField(default=10)
 
-    next_allowed_at: datetime | None = DBField(default=None, indexed=True)
+    next_allowed_at: datetime = DBField(indexed=True)
 
     failure_count: int = DBField(default=0)
     success_count: int = DBField(default=0)
@@ -73,7 +73,7 @@ class URL(BaseModel):
     depth: int = DBField(default=0)
 
     # will not be None and will be set to a date due to db optimisations
-    next_crawl_at: datetime | None = DBField(default=None, indexed=True)
+    next_crawl_at: datetime = DBField(indexed=True)
 
     last_crawl_at: datetime | None = DBField(default=None)
 
@@ -104,7 +104,7 @@ class Content(BaseModel):
     simhash_3: int = DBField(indexed=True)
     simhash_4: int = DBField(indexed=True)
 
-    summary: str | None = DBField()
+    summary: str | None = DBField(default=None)
 
     chunks: list[str] = DBField(default=[])
 

@@ -28,3 +28,31 @@ class SourceListRequest(BaseModel):
 
 class SourceListReponse(BaseModel):
     data: list[SourceResponse]
+
+
+class UpdateSourceRequest(BaseModel):
+    priority_score: float | None = None
+    crawl_state: str | None = None
+    next_crawl_at: datetime | None = None
+
+
+class HostnameListRequest(BaseModel):
+    id: str | None = None
+    hostname: str | None = None
+    after_id: str | None = None
+    before_id: str | None = None
+    limit: int = 20
+
+
+class HostnameResponse(BaseModel):
+    name: str
+    crawl_count: int = 0
+    crawl_delay_seconds: float
+    last_crawled_at: datetime | None
+    next_allowed_at: datetime | None
+    failure_count: int
+    success_count: int
+
+
+class HostnameListResponse(BaseModel):
+    data: list[HostnameResponse]

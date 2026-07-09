@@ -1,7 +1,16 @@
 from fastapi import APIRouter, HTTPException
 from ..database import get_database, APPWRITE_DATABASE_ID, get_read_all_permission
 from ..database.models import URL, Hostname, CrawlState
-from .models import SourceRequest, SourceResponse, SourceListRequest, SourceListReponse
+from .models import (
+    SourceRequest,
+    SourceResponse,
+    SourceListRequest,
+    SourceListReponse,
+    UpdateSourceRequest,
+    HostnameListRequest,
+    HostnameResponse,
+    HostnameListResponse,
+)
 from urllib.parse import urlsplit
 import asyncio
 from datetime import datetime, timezone
@@ -37,11 +46,17 @@ async def create_source(body: SourceRequest):
         )
 
     url_data = URL(
-        url=body.url, hostname=hostname_str, crawl_state=CrawlState.QUEUED.value
+        url=body.url,
+        hostname=hostname_str,
+        crawl_state=CrawlState.QUEUED.value,
+        next_crawl_at=datetime.now(timezone.utc).isoformat(),
     ).model_dump()
     url_data["crawl_state"] = str(CrawlState.QUEUED.value)
     url_data["next_crawl_at"] = datetime.now(timezone.utc).isoformat()
-    hostname_data = Hostname(name=hostname_str).model_dump()
+    hostname_data = Hostname(
+        name=hostname_str, next_allowed_at=datetime.now(timezone.utc).isoformat()
+    ).model_dump()
+    hostname_data["next_allowed_at"] = datetime.now(timezone.utc).isoformat()
 
     def _create_hostnames() -> dict:
         try:
@@ -123,13 +138,44 @@ async def list_sources(filters: Annotated[SourceListRequest, RequestQuery()]):
     return SourceListReponse(data=response)
 
 
+@router.get("/hostnames")
+async def list_hostnames(filters: Annotated[HostnameListRequest, RequestQuery()]):
+    queries = [Query.order_desc("$createdAt"), Query.limit(filters.limit)]
+    if filters.before_id:
+        queries.append(Query.cursor_before(filters.before_id))
+
+    elif filters.after_id:
+        queries.append(Query.cursor_after(filters.after_id))
+
+    for field in ["id", "hostname"]:
+        value = getattr(filters, field)
+        if value is not None:
+            queries.append(Query.equal(field, [value]))
+
+    def _list_hostnames():
+        try:
+            rows = database.list_rows(
+                DB_ID, Hostname.__name__, queries=queries, total="false"
+            )
+            return [{"id": row.id, **row.data} for row in rows.rows]
+        except Exception as e:
+            return {"error": str(e)}
+
+    hostnames: list[dict] = await to_thread(_list_hostnames)()
+    if "error" in hostnames and "already" not in hostnames["error"].lower():
+        raise HTTPException(status_code=500, detail=hostnames["error"])
+    response = []
+    for hostname in hostnames:
+        response.append(HostnameResponse(**hostname))
+    return HostnameListResponse(data=response)
+
+
 @router.get("/sources/{id}")
 async def get_source(id: str):
     def _get_url():
         try:
             row = database.get_row(APPWRITE_DATABASE_ID, URL.__name__, row_id=id)
             return row.data
-            return row
         except Exception as e:
             return {"error": str(e)}
 
@@ -138,6 +184,76 @@ async def get_source(id: str):
         raise HTTPException(status_code=500, detail=url["error"])
 
     return SourceResponse(**url, id=id)
+
+
+@router.patch("/sources/{id}", response_model=SourceResponse)
+async def update_source(id: str, body: UpdateSourceRequest):
+    update_data = body.model_dump(exclude_unset=True)
+
+    if "crawl_state" in update_data:
+        update_data["crawl_state"] = str(update_data["crawl_state"])
+
+    if "next_crawl_at" in update_data:
+        update_data["next_crawl_at"] = update_data["next_crawl_at"].isoformat()
+
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    def _update_url() -> dict:
+        try:
+            row = database.update_row(DB_ID, URL.__name__, row_id=id, data=update_data)
+            return {"id": row.id, **row.data}
+        except Exception as e:
+            return {"error": str(e)}
+
+    result = await to_thread(_update_url)()
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+
+    return SourceResponse(**result)
+
+
+# queue states retrieval
+@router.get("/front-queue")
+def get_front_queue():
+    from ..queue.front_queue import FrontQueue
+
+    front_queue = FrontQueue()
+    front_queue.init()
+
+    return list(front_queue)
+
+
+@router.get("/back-queue")
+def get_back_queue():
+    from ..queue.front_queue import FrontQueue
+    from ..queue.back_queue import BackQueue
+
+    front_queue = FrontQueue()
+    front_queue.init()
+
+    back_queue = BackQueue()
+    back_queue.init(list(front_queue))
+
+    return back_queue.get_hostnames()
+
+
+@router.get("/scheduler-queue")
+def get_back_queue():
+    from ..queue.front_queue import FrontQueue
+    from ..queue.back_queue import BackQueue
+    from ..queue.scheduler_queue import SchedulerQueue
+
+    front_queue = FrontQueue()
+    front_queue.init()
+
+    back_queue = BackQueue()
+    back_queue.init(list(front_queue))
+
+    scheduler_queue = SchedulerQueue()
+    scheduler_queue.init(back_queue.get_hostnames())
+
+    return list(scheduler_queue._queue)
 
 
 # feed builder endpoints
