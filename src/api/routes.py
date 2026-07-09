@@ -125,7 +125,19 @@ async def list_sources(filters: Annotated[SourceListRequest, RequestQuery()]):
 
 @router.get("/sources/{id}")
 async def get_source(id: str):
-    pass
+    def _get_url():
+        try:
+            row = database.get_row(APPWRITE_DATABASE_ID, URL.__name__, row_id=id)
+            return row.data
+            return row
+        except Exception as e:
+            return {"error": str(e)}
+
+    url = await to_thread(_get_url)()
+    if "error" in url and "already" not in url["error"].lower():
+        raise HTTPException(status_code=500, detail=url["error"])
+
+    return SourceResponse(**url, id=id)
 
 
 # feed builder endpoints
