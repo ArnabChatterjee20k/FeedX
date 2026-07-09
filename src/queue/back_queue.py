@@ -20,9 +20,11 @@ class BackQueue(Queue):
     def push(self, hostname: str, url: URLRow):
         if hostname in self._queues:
             self._queues[hostname].append(url)
-            self._hostname_lock[hostname] = asyncio.Lock()
         else:
             self._queues[hostname] = deque([url])
+
+        if hostname not in self._hostname_lock:
+            self._hostname_lock[hostname] = asyncio.Lock()
 
     def pop(self, hostname):
         if hostname not in self._queues or not self._queues[hostname]:
@@ -30,10 +32,14 @@ class BackQueue(Queue):
         return self._queues[hostname].popleft()
 
     async def pop_async(self, hostname):
-        if hostname not in self._queues or not self._queues[hostname]:
+        try:
+            if hostname not in self._queues or not self._queues[hostname]:
+                return None
+            async with self._hostname_lock[hostname]:
+                return self.pop(hostname)
+        except Exception as e:
+            self._logger.error("Error during popping", tag="POP_ASYNC", error=e)
             return None
-        async with self._hostname_lock[hostname]:
-            return self.pop(hostname)
 
     def get_hostnames(self) -> list[str]:
         return list(self._queues.keys())

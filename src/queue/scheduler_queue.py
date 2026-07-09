@@ -70,6 +70,8 @@ class SchedulerQueue(Queue):
                 # popping it so that its not get used by the other worker
                 # if any issues happened then the database already has the item in current state and can be peaked
                 item_for_the_current_worker = self.pop()
+                if not self._queue:
+                    return item_for_the_current_worker
                 delay = (
                     self._queue[0].next_allowed_at - datetime.now(timezone.utc)
                 ).total_seconds()
@@ -96,7 +98,7 @@ class SchedulerQueue(Queue):
         return [
             SchedulerQueueItem(
                 id=row.id,
-                hostname=row.model_dump().get("name"),
+                hostname=row.data.get("name"),
                 next_allowed_at=row.model_dump().get("next_allowed_at"),
             )
             for row in rows.rows

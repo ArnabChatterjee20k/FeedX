@@ -44,9 +44,13 @@ class CrawlWorker:
             updated = False
             if not url:
                 continue
+            self._logger.info(
+                f"Processing item url = {url.url} | hostname = {url.hostname}",
+                tag="CRAWL_WORKER_ITEM",
+            )
             while not updated and retry < 5:
                 updated, err = await asyncio.to_thread(
-                    self._update_state(url.id, state=CrawlState.FETCHING)
+                    self._update_state, url.id, state=CrawlState.FETCHING
                 )
                 if not updated:
                     self._logger.error(
@@ -155,6 +159,10 @@ class CrawlWorker:
                     )
                 chunks_created = False
                 retry = 0
+
+                if not contents:
+                    await self.complete()
+                    continue
 
                 while not chunks_created and retry < 5:
                     chunks_created, chunk_err = await asyncio.to_thread(
@@ -309,7 +317,7 @@ class CrawlWorker:
                 database_id=APPWRITE_DATABASE_ID,
                 table_id=URL.__name__,
                 row_id=url_id,
-                data={"crawl_state": state.value},
+                data={"crawl_state": str(state.value)},
             )
             return True, None
         except Exception as e:
@@ -326,6 +334,8 @@ class CrawlWorker:
     def _check_existing_content_hashes(
         self, hashes: dict[str, int]
     ) -> tuple[list[str], None | Exception]:
+        if not hashes:
+            return [], None
         try:
             database = get_database()
 
@@ -386,8 +396,14 @@ class CrawlWorker:
     def _create_chunks(self, contents: list[Content]) -> tuple[bool, None | Exception]:
         try:
             database = get_database()
-            contents = list(map(lambda content: content.model_dump(), contents))
-            database.create_rows(APPWRITE_DATABASE_ID, Content.__name__, rows=contents)
+            rows = []
+            for content in contents:
+                row = content.model_dump()
+                row["pipeline_state"] = str(content.pipeline_state.value)
+                row["scraped_at"] = content.scraped_at.isoformat()
+                row = {k: v for k, v in row.items() if v is not None}
+                rows.append(row)
+            database.create_rows(APPWRITE_DATABASE_ID, Content.__name__, rows=rows)
             return True, None
         except Exception as e:
             return False, e
