@@ -2,6 +2,7 @@ import typer
 import asyncio
 from dotenv import load_dotenv
 from . import get_worker_pool
+from .database import init_database
 
 load_dotenv()
 cli = typer.Typer()
@@ -15,6 +16,9 @@ cli.add_typer(crawler, name="crawler")
 cli.add_typer(sources, name="sources")
 cli.add_typer(hostnames, name="hostnames")
 
+@cli.command("init")
+def init():
+    init_database()
 
 @crawler.command("crawl")
 def crawl():
