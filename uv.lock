@@ -1636,7 +1636,7 @@ wheels = [
 [[package]]
 name = "scout"
 version = "0.1.0"
-source = { git = "https://github.com/ArnabChatterjee20k/Scout.git#3f18d0f444f19fa91d5e8789e3ac67fa3c301648" }
+source = { git = "https://github.com/ArnabChatterjee20k/Scout.git#16b90d8ed008b94cf10bb7f8e7e1fd040d8db4de" }
 dependencies = [
     { name = "cssselect" },
     { name = "domdistill" },
