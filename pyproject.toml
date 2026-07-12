@@ -13,6 +13,9 @@ dependencies = [
     "scout",
 ]
 
+[project.scripts]
+feedx = "src.cli:cli"
+
 [tool.uv.sources]
 scout = { git = "https://github.com/ArnabChatterjee20k/Scout.git" }
 domdistill = { git = "https://github.com/ArnabChatterjee20k/domdistill.git" }

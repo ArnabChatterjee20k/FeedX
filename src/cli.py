@@ -16,9 +16,11 @@ cli.add_typer(crawler, name="crawler")
 cli.add_typer(sources, name="sources")
 cli.add_typer(hostnames, name="hostnames")
 
+
 @cli.command("init")
 def init():
     init_database()
+
 
 @crawler.command("crawl")
 def crawl():
