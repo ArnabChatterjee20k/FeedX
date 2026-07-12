@@ -8,10 +8,11 @@ from ..database import get_database, APPWRITE_DATABASE_ID
 from appwrite.query import Query
 from ..database.models import CrawlState, URL, Content, ContentPipelineState, Hostname
 import os, random, re
-from datetime import datetime
+from datetime import datetime, timezone
 from appwrite.operator import Operator
 from domdistill.chunker import HTMLIntentChunker
 from domdistill.simhash import get_similarity
+import inspect
 
 crawl_id = os.environ.get("CRAWL_ID")
 
@@ -66,6 +67,7 @@ class CrawlWorker:
                     tag="UPDATE_STATE",
                     error=err,
                 )
+                await self.error()
                 continue
             try:
                 depth = 5
@@ -121,6 +123,8 @@ class CrawlWorker:
                         tag="CHECK_CONTENTS_EXIST",
                         error=err,
                     )
+                    await self.error()
+                    return
                 # filtering out duplicates, keeping only new documents
                 documents = list(
                     filter(
@@ -133,7 +137,8 @@ class CrawlWorker:
                     *[
                         asyncio.to_thread(
                             document.get_relevant_sections,
-                            query=document.metadata.get("title"),
+                            query=document.metadata.get("title") or "",
+                            remove_tags=[],
                         )
                         for document in documents
                     ]
@@ -153,7 +158,7 @@ class CrawlWorker:
                             simhash_3=simhash_chunks[2],
                             simhash_4=simhash_chunks[3],
                             chunks=chunks,
-                            scraped_at=datetime.now(),
+                            scraped_at=datetime.now(timezone.utc),
                             pipeline_state=ContentPipelineState.PENDING,
                         )
                     )
@@ -176,10 +181,13 @@ class CrawlWorker:
                         )
                         retry += 1
                         await asyncio.sleep(1 * (retry + 1))
+                if not chunks_created:
+                    await self.error()
+                    continue
                 await self.complete()
             except Exception as err:
                 self._logger.error(
-                    f"Failed to crawl {url.id}",
+                    f"Failed to crawl {url.id} {url.url}",
                     tag="CRAWL",
                     error=err,
                 )
@@ -193,9 +201,8 @@ class CrawlWorker:
         await self._scout.stop()
 
     async def complete(self):
+        tasks: list[asyncio.Task] = []
         try:
-            tasks = []
-
             async with asyncio.TaskGroup() as tg:
                 t1 = tg.create_task(
                     self._retry(
@@ -225,8 +232,14 @@ class CrawlWorker:
                 tasks.extend([t1, t2, t3])
 
         except ExceptionGroup as eg:
+            errors = []
+            for task in tasks:
+                if task.exception():
+                    errors.append(task.exception())
             self._logger.error(
-                f"Failed to complete crawl for {self._url.id}", tag="COMPLETE", error=eg
+                f"Failed to complete crawl for {self._url.id}",
+                tag="COMPLETE",
+                error=f"{eg} | task errors = {errors}",
             )
 
     async def error(self):
@@ -270,7 +283,11 @@ class CrawlWorker:
         max_retries = 5
         delay = 1
         for retry in range(max_retries):
-            success, err = await coro_fn(*args, **kwargs)
+            result = coro_fn(*args, **kwargs)
+            if inspect.isawaitable(result):
+                success, err = await result
+            else:
+                success, err = result
 
             if success:
                 self._logger.info(f"Success {tag}", tag=tag)
@@ -290,7 +307,7 @@ class CrawlWorker:
         try:
             database = get_database()
             data = {
-                "last_crawled_at": datetime.now().isoformat(),
+                "last_crawled_at": datetime.now(timezone.utc).isoformat(),
                 "next_allowed_at": self._scheduled_item.next_allowed_at.isoformat(),
             }
 
@@ -357,7 +374,7 @@ class CrawlWorker:
                 queries=[
                     Query.or_queries(
                         [
-                            Query.equal("simhash", all_simhashes),
+                            Query.equal("simhash", list(map(str, all_simhashes))),
                             Query.equal("simhash_1", all_chunk_1),
                             Query.equal("simhash_2", all_chunk_2),
                             Query.equal("simhash_3", all_chunk_3),
@@ -371,9 +388,13 @@ class CrawlWorker:
 
             existing_simhash_to_urls: dict[int, list[str]] = {}
             for row in rows.rows:
-                row_data = row.model_dump()
+                row_data = row.data
                 existing_simhash = row_data.get("simhash")
+                if isinstance(existing_simhash, str) and existing_simhash.isdigit():
+                    existing_simhash = int(existing_simhash)
                 existing_url = row_data.get("url")
+                if existing_simhash is None:
+                    continue
                 if existing_simhash not in existing_simhash_to_urls:
                     existing_simhash_to_urls[existing_simhash] = []
                 existing_simhash_to_urls[existing_simhash].append(existing_url)
@@ -382,10 +403,18 @@ class CrawlWorker:
             for doc_url, doc_simhash in hashes.items():
                 for existing_simhash in existing_simhash_to_urls:
                     if doc_simhash == existing_simhash:
+                        self._logger.info(
+                            f"Skipping already existing content for {doc_url} | simhash={doc_simhash}",
+                            tag="CHECK_CONTENTS_EXIST",
+                        )
                         duplicate_urls.append(doc_url)
                         break
                     similarity = get_similarity(doc_simhash, existing_simhash)
                     if similarity > 0.6:
+                        self._logger.info(
+                            f"Skipping similar content for {doc_url} | existing_simhash={existing_simhash} | similarity={similarity:.2f}",
+                            tag="CHECK_CONTENTS_EXIST",
+                        )
                         duplicate_urls.append(doc_url)
                         break
 
