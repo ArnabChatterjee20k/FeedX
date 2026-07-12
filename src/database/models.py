@@ -95,8 +95,8 @@ class Content(BaseModel):
     # exact similarity matching
     # hash: str = DBField(indexed=True)
 
-    # direct simhash match
-    simhash: int = DBField(indexed=True)
+    # direct simhash match -> a string for storing 64 bit integer
+    simhash: str = DBField(indexed=True)
 
     # dividing the 64 bits simhash into 4 * 16 bits to query by or and then doing the hamming distance on the application level
     simhash_1: int = DBField(indexed=True)
@@ -123,6 +123,13 @@ class Content(BaseModel):
     def _coerce_pipeline_state(cls, value):
         if isinstance(value, str) and value.isdigit():
             return int(value)
+        return value
+
+    @field_validator("simhash", mode="before")
+    @classmethod
+    def _coerce_simhash(cls, value):
+        if not isinstance(value, str):
+            return str(value)
         return value
 
 
