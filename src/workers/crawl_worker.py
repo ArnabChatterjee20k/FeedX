@@ -70,7 +70,9 @@ class CrawlWorker:
                 await self.error()
                 continue
             try:
+                # depth of a single graph of pages visiting
                 depth = 5
+                # total pages limit
                 page_limit = 10
                 # should exclude these matches but shouldn't ignore if they themselves are a blog like how to signin, better login arch
                 # also they should be checked if query params present as well
@@ -78,7 +80,11 @@ class CrawlWorker:
                     re.compile(
                         r"/(?:login|signin|signup|changelog)/?(?:\?.*)?(?:#.*)?$",
                         re.IGNORECASE,
-                    )
+                    ),
+                    re.compile(
+                        rf"^{re.escape(url.url)}(?:#.*)?$",
+                        re.IGNORECASE,
+                    ),
                 ]
                 # the url itself should excape the regex
                 include = [re.compile(rf"^{re.escape(url.url)}")]
