@@ -28,10 +28,16 @@ class SchedulerQueue(Queue):
     def push(self, item: SchedulerQueueItem):
         heapq.heappush(self._queue, item)
 
-    async def push_async(self, item: SchedulerQueueItem):
-        async with self._hostname_available_condition:
-            self.push(item)
-            await self._hostname_available_condition.notify()
+    async def push_async(
+        self, item: SchedulerQueueItem
+    ) -> tuple[bool, None | Exception]:
+        try:
+            async with self._hostname_available_condition:
+                self.push(item)
+                self._hostname_available_condition.notify(1)
+            return True, None
+        except Exception as e:
+            return False, e
 
     def pop(self):
         if not self._queue:
@@ -99,7 +105,7 @@ class SchedulerQueue(Queue):
             SchedulerQueueItem(
                 id=row.id,
                 hostname=row.data.get("name"),
-                next_allowed_at=row.model_dump().get("next_allowed_at"),
+                next_allowed_at=datetime.fromisoformat(row.data.get("next_allowed_at")),
             )
             for row in rows.rows
         ]

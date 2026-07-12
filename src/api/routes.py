@@ -214,20 +214,41 @@ async def update_source(id: str, body: UpdateSourceRequest):
 
     return SourceResponse(**result)
 
+
 @router.patch("/sources/retry/{id}")
 async def retry_source(id: str):
     def _update():
         try:
-            url = database.update_row(DB_ID,URL.__name__, row_id=id, data={"crawl_state": str(CrawlState.QUEUED.value), "next_crawl_at": datetime.now().isoformat()})
-            hostnames = database.list_rows(DB_ID, Hostname.__name__, total="false", queries=[Query.equal("name", url.data.get("hostname")), Query.limit(1)])
-            database.update_row(DB_ID,Hostname.__name__, row_id=hostnames.rows[0].id, data={"next_allowed_at": datetime.now().isoformat()})
+            url = database.update_row(
+                DB_ID,
+                URL.__name__,
+                row_id=id,
+                data={
+                    "crawl_state": str(CrawlState.QUEUED.value),
+                    "next_crawl_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            hostnames = database.list_rows(
+                DB_ID,
+                Hostname.__name__,
+                total="false",
+                queries=[Query.equal("name", url.data.get("hostname")), Query.limit(1)],
+            )
+            database.update_row(
+                DB_ID,
+                Hostname.__name__,
+                row_id=hostnames.rows[0].id,
+                data={"next_allowed_at": datetime.now(timezone.utc).isoformat()},
+            )
             return {"id": url.id, **url.data}
         except Exception as e:
-            return {"error": str(e)}    
+            return {"error": str(e)}
+
     result = await to_thread(_update)()
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
     return SourceResponse(**result)
+
 
 # queue states retrieval
 @router.get("/front-queue")
