@@ -1,14 +1,14 @@
 import asyncio
-from scout.scout import Scout
+from scout.scout import Scout, BrowserManagerConfig
 from ..queue.back_queue import BackQueue
 from ..queue.scheduler_queue import SchedulerQueue
-from scout.logger import get_logger
 from scout.core import CrawlConfig, ScrollingRule, VirtualScrollConfig, Document
+from .worker import Worker
 from ..database import get_database, APPWRITE_DATABASE_ID
 from appwrite.query import Query
 from ..database.models import CrawlState, URL, Content, ContentPipelineState, Hostname
 import os, random, re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from appwrite.operator import Operator
 from domdistill.chunker import HTMLIntentChunker
 from domdistill.simhash import get_similarity
@@ -16,55 +16,91 @@ import inspect
 
 crawl_id = os.environ.get("CRAWL_ID")
 
+HOSTNAME_LEASE_SECONDS = 10 * 60
 
-class CrawlWorker:
-    def __init__(
-        self, id, scout: Scout, back_queue: BackQueue, scheduler_queue: SchedulerQueue
-    ):
+
+class CrawlWorker(Worker):
+    def __init__(self, id, back_queue: BackQueue, scheduler_queue: SchedulerQueue):
+        super().__init__(id)
         self._back_queue = back_queue
         self._scheduler_queue = scheduler_queue
-        self._id = id
-        self._scout = scout
-        self._logger = get_logger(f"Worker_{id}")
-        self._running = False
+        self._scout = Scout(browser_config=BrowserManagerConfig(headless=False))
         self._url = None
         self._scheduled_item = None
 
     async def start(self):
         self._running = True
         self._logger.info(f"Worker Started {self._id}", tag="START")
+        # the worker owns the browser lifecycle; keep it open for the whole run
+        async with self._scout.start() as scout:
+            self._scout = scout
+            await self._run()
+
+    async def _run(self):
         while self._running:
             item = await self._scheduler_queue.pop_async()
             if not item:
                 continue
             hostname = item.hostname
+            # atomic hostname lease: only the worker/process that pushes
+            # next_allowed_at into the future (while it is still due) may crawl
+            # this host now. keeps two processes off the same host concurrently.
+            leased, lease_err = await asyncio.to_thread(self._lease_hostname, item.id)
+            if not leased:
+                if lease_err:
+                    self._logger.error(
+                        f"Failed to lease hostname {hostname}",
+                        tag="LEASE_HOSTNAME",
+                        error=lease_err,
+                    )
+                else:
+                    self._logger.info(
+                        f"Hostname {hostname} leased by another worker/process, skipping",
+                        tag="LEASE_HOSTNAME",
+                    )
+                continue
             url = await self._back_queue.pop_async(hostname)
             self._url = url
             self._scheduled_item = item
-            retry = 0
-            updated = False
             if not url:
                 continue
             self._logger.info(
                 f"Processing item url = {url.url} | hostname = {url.hostname}",
                 tag="CRAWL_WORKER_ITEM",
             )
-            while not updated and retry < 5:
-                updated, err = await asyncio.to_thread(
-                    self._update_state, url.id, state=CrawlState.FETCHING
-                )
-                if not updated:
-                    self._logger.error(
-                        f"Failed to update state of url {url.id} to {CrawlState.FETCHING.value}, Retry Count {retry}",
-                        tag="UPDATE_STATE",
-                        error=err,
-                    )
-                    retry += 1
-                    await asyncio.sleep(1 * (retry + 1))
-            if not updated:
+            # atomic claim: QUEUED/RETRY -> FETCHING. only the worker/process that
+            # wins the conditional update crawls the url; others skip it.
+            retry = 0
+            claimed = False
+            taken_by_other = False
+            err = None
+            while not claimed and retry < 5:
+                claimed, err = await asyncio.to_thread(self._claim, url.id)
+                if claimed:
+                    break
+                if err is None:
+                    # 0 rows updated -> another worker/process already claimed it
+                    taken_by_other = True
+                    break
                 self._logger.error(
-                    f"skipping {url.id} as state not updated",
-                    tag="UPDATE_STATE",
+                    f"Failed to claim url {url.id} to {CrawlState.FETCHING.value}, Retry Count {retry}",
+                    tag="CLAIM_STATE",
+                    error=err,
+                )
+                retry += 1
+                await asyncio.sleep(1 * (retry + 1))
+            if not claimed:
+                if taken_by_other:
+                    self._logger.info(
+                        f"Skipping {url.id}, already claimed by another worker/process",
+                        tag="CLAIM_STATE",
+                    )
+                    # keep the host scheduled so its other urls still get processed
+                    await self._scheduler_queue.push_async(self._scheduled_item)
+                    continue
+                self._logger.error(
+                    f"skipping {url.id} as state not claimed",
+                    tag="CLAIM_STATE",
                     error=err,
                 )
                 await self.error()
@@ -130,7 +166,7 @@ class CrawlWorker:
                         error=err,
                     )
                     await self.error()
-                    return
+                    continue
                 # filtering out duplicates, keeping only new documents
                 documents = list(
                     filter(
@@ -154,10 +190,12 @@ class CrawlWorker:
                     document = documents[idx]
                     simhash = hashes.get(document.url)
                     simhash_chunks = self._extract_simhash_chunks(simhash)
+                    title = (document.metadata or {}).get("title") or None
                     contents.append(
                         Content(
                             url=document.url,
                             hostname=document.url.split("/")[2],
+                            title=title,
                             simhash=simhash,
                             simhash_1=simhash_chunks[0],
                             simhash_2=simhash_chunks[1],
@@ -330,6 +368,43 @@ class CrawlWorker:
                 data=data,
             )
             return True, None
+        except Exception as e:
+            return False, e
+
+    def _lease_hostname(self, hostname_id) -> tuple[bool, None | Exception]:
+        try:
+            database = get_database()
+            now = datetime.now(timezone.utc)
+            lease_until = (now + timedelta(seconds=HOSTNAME_LEASE_SECONDS)).isoformat()
+            result = database.update_rows(
+                APPWRITE_DATABASE_ID,
+                Hostname.__name__,
+                data={"next_allowed_at": lease_until},
+                queries=[
+                    Query.equal("$id", [hostname_id]),
+                    Query.less_than_equal("next_allowed_at", now.isoformat()),
+                ],
+            )
+            return len(result.rows) == 1, None
+        except Exception as e:
+            return False, e
+
+    def _claim(self, url_id) -> tuple[bool, None | Exception]:
+        try:
+            database = get_database()
+            result = database.update_rows(
+                APPWRITE_DATABASE_ID,
+                URL.__name__,
+                data={"crawl_state": str(CrawlState.FETCHING.value)},
+                queries=[
+                    Query.equal("$id", [url_id]),
+                    Query.equal(
+                        "crawl_state",
+                        [str(CrawlState.QUEUED.value), str(CrawlState.RETRY.value)],
+                    ),
+                ],
+            )
+            return len(result.rows) == 1, None
         except Exception as e:
             return False, e
 
