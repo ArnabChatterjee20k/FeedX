@@ -35,6 +35,7 @@ class CrawlState(Enum):
     BLOCKED = 6
 
 
+# TODO: needs a retrying state as well and remove unncessary states
 class ContentPipelineState(Enum):
     PENDING = 1
     EXTRACTING = 2
@@ -91,6 +92,8 @@ class Content(BaseModel):
     url: str = DBField(indexed=True, unique=True)
 
     hostname: str = DBField(indexed=True)
+
+    title: str | None = DBField(default=None)
 
     # exact similarity matching
     # hash: str = DBField(indexed=True)
