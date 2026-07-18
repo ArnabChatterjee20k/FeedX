@@ -9,6 +9,8 @@ dependencies = [
     "black>=26.5.1",
     "domdistill",
     "fastapi[standard]>=0.139.0",
+    "pydantic-ai-slim[openai]>=2.13.0",
+    "pydantic-ai[openai]>=2.13.0",
     "python-dotenv>=1.2.2",
     "scout",
 ]

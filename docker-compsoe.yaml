@@ -1,0 +1,17 @@
+services:
+  ollama:
+    # Build straight from your GitHub repo (no local clone needed)
+    image: appwrite/ollama
+    restart: unless-stopped
+    environment:
+      # entrypoint.sh pulls these at runtime if not already present
+      MODELS: llama3.2:1b
+      # duration to keep model in memory
+      OLLAMA_KEEP_ALIVE: 24h
+    ports:
+      - "11434:11434"
+    volumes:
+      - models:/root/.ollama
+
+volumes:
+  models:
