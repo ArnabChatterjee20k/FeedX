@@ -1,4 +1,4 @@
-from ..database.models import URL, Hostname
+from ..database.models import URL, Hostname, Content
 from datetime import datetime, timezone, timedelta
 
 
@@ -8,6 +8,11 @@ class URLRow(URL):
 
 
 class HostnameRow(Hostname):
+    id: str
+    sequence: int
+
+
+class ContentRow(Content):
     id: str
     sequence: int
 
