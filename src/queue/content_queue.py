@@ -97,7 +97,7 @@ class ContentQueue(Queue):
 
     def _get_all_contents(self) -> list[ContentRow]:
         database = get_database()
-        limit = os.environ.get("FRONT_QUEUE_INIT_LIMIT", 1000)
+        limit = os.environ.get("QUEUE_INIT_LIMIT", 1000)
         queries = [
             Query.equal("pipeline_state", [str(ContentPipelineState.PENDING.value)]),
             Query.limit(limit),
