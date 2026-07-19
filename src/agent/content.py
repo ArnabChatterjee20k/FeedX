@@ -1,5 +1,6 @@
 import os
-from typing import Literal
+import re
+from typing import Any
 
 from pydantic import BaseModel, Field, create_model, field_validator
 from pydantic_ai import Agent
@@ -89,22 +90,35 @@ class ContentAnalysis(BaseModel):
         return normalize_tags(tags)
 
 
-def _build_output_model(allowed_tags: list[str]) -> type[BaseModel]:
-    """Return the schema used for structured output.
+def _tag_field_name(tag: str, idx: int) -> str:
+    """A stable, valid Python identifier for a tag's boolean field.
 
-    With an allowlist, `tags` items are constrained to a `Literal` enum of the
-    allowed values so the model cannot generate anything off-list. Without one,
-    fall back to free-form `list[str]`.
+    The index keeps names unique even if two tags slugify to the same thing.
+    """
+    slug = re.sub(r"[^0-9a-z]+", "_", tag.lower()).strip("_")
+    return f"tag_{idx}_{slug}" if slug else f"tag_{idx}"
+
+
+def _build_output_model(
+    allowed_tags: list[str],
+) -> tuple[type[BaseModel], dict[str, str] | None]:
+    """Return the structured-output schema (and, for allowlists, its field map).
+
+    Free-form mode -> plain `ContentAnalysis` with a `list[str]` of tags, and a
+    ``None`` field map.
+
+    Allowlist mode -> instead of asking for a *subset list* (which small models
+    answer by dumping the whole vocabulary), we expose ONE boolean field per
+    allowed tag. Each tag then becomes an independent, grounded yes/no decision
+    with ``false`` as the natural default, so the model has to justify every tag
+    it keeps. The returned field map (``field_name -> original_tag``) is used to
+    decode the booleans back into a tag list.
     """
     if not allowed_tags:
-        return ContentAnalysis
+        return ContentAnalysis, None
 
-    # Literal subscripted with a tuple of values -> an enum of those values.
-    tag_literal = Literal[tuple(allowed_tags)]  # type: ignore[valid-type]
-
-    return create_model(
-        "ConstrainedContentAnalysis",
-        summary=(
+    fields: dict[str, tuple[type, Any]] = {
+        "summary": (
             str,
             Field(
                 description=(
@@ -114,17 +128,26 @@ def _build_output_model(allowed_tags: list[str]) -> type[BaseModel]:
                 )
             ),
         ),
-        tags=(
-            list[tag_literal],  # type: ignore[valid-type]
+    }
+    field_map: dict[str, str] = {}
+    for idx, tag in enumerate(allowed_tags):
+        fname = _tag_field_name(tag, idx)
+        field_map[fname] = tag
+        fields[fname] = (
+            bool,
             Field(
+                default=False,
                 description=(
-                    "Between 1 and 8 tags, each chosen ONLY from the allowed "
-                    "list. No duplicates."
+                    f'Set true ONLY if the page is substantially about "{tag}" '
+                    f'— i.e. "{tag}" is one of its main subjects. Set false if '
+                    "the topic is merely mentioned in passing, only loosely "
+                    "related, from a neighbouring field, or absent."
                 ),
-                max_length=MAX_TAGS,
             ),
-        ),
-    )
+        )
+
+    model = create_model("ConstrainedContentAnalysis", **fields)
+    return model, field_map
 
 
 def _build_system_prompt(allowed_tags: list[str]) -> str:
@@ -145,10 +168,24 @@ Rules:
     if allowed_tags:
         tag_list = "\n".join(f"  - {t}" for t in allowed_tags)
         base += (
-            "\n\nTag vocabulary (CLOSED SET): choose tags ONLY from this exact "
-            "list, copying the spelling verbatim. Pick the ones that genuinely "
-            "apply; if none apply, return an empty tag list. Never invent new "
-            f"tags.\n{tag_list}"
+            "\n\nTopic vocabulary (CLOSED SET). For each of these candidate "
+            "topics you must decide INDEPENDENTLY whether the page is "
+            f"substantially about it (one boolean per topic):\n{tag_list}"
+            "\n\nDecision rule — be strict and selective:\n"
+            "  - Mark a topic true ONLY if it is one of the MAIN subjects of the "
+            "page.\n"
+            "  - Mark it false if the page merely mentions it, is only loosely "
+            "related, or is about a neighbouring field.\n"
+            "  - Most pages are about only 1-3 of these topics. Marking many — or "
+            "all — of them true is almost always wrong.\n"
+            "  - It is completely fine, and common, for EVERY topic to be false "
+            "when none genuinely fit. Never force a topic true.\n\n"
+            "Example (illustrative vocabulary, not the one above):\n"
+            "  Candidate topics: cooking, travel, finance, gardening\n"
+            "  Page about tax-loss harvesting in a brokerage account\n"
+            "    -> finance = true; cooking, travel, gardening = false\n"
+            "  Page that is a tutorial on training a neural network\n"
+            "    -> all four false (none of these topics fit the page)"
         )
     else:
         base += (
@@ -194,13 +231,18 @@ class ContentAgent:
             retries=2,
         )
 
-        # Cache the (schema, instructions, allowed_set) per tag vocabulary so we
-        # don't rebuild a dynamic model on every call.
-        self._cache: dict[tuple[str, ...], tuple[NativeOutput, str, set[str]]] = {}
+        # Cache the (schema, instructions, allowed_set, field_map) per tag
+        # vocabulary so we don't rebuild a dynamic model on every call. The
+        # field_map is None in free-form mode and {field_name: tag} for an
+        # allowlist (see `_build_output_model`).
+        self._cache: dict[
+            tuple[str, ...],
+            tuple[NativeOutput, str, set[str], dict[str, str] | None],
+        ] = {}
 
     def _prepare(
         self, allowed_tags: list[str] | None
-    ) -> tuple[NativeOutput, str, set[str]]:
+    ) -> tuple[NativeOutput, str, set[str], dict[str, str] | None]:
         allowed = tuple(
             normalize_tags(
                 allowed_tags if allowed_tags is not None else load_allowed_tags()
@@ -208,9 +250,10 @@ class ContentAgent:
         )
         cached = self._cache.get(allowed)
         if cached is None:
-            output = NativeOutput(_build_output_model(list(allowed)))
+            model, field_map = _build_output_model(list(allowed))
+            output = NativeOutput(model)
             instructions = _build_system_prompt(list(allowed))
-            cached = (output, instructions, set(allowed))
+            cached = (output, instructions, set(allowed), field_map)
             self._cache[allowed] = cached
         return cached
 
@@ -246,16 +289,28 @@ class ContentAgent:
         return "\n".join(parts)
 
     @staticmethod
-    def _to_result(output: BaseModel, allowed_set: set[str]) -> ContentAnalysis:
+    def _to_result(
+        output: BaseModel,
+        allowed_set: set[str],
+        field_map: dict[str, str] | None,
+    ) -> ContentAnalysis:
         """Coerce raw model output into a stable `ContentAnalysis`.
 
-        Even though the schema constrains tags, we filter against the allowlist
-        once more as a safety net (in case a model ignores the enum grammar).
+        Allowlist mode decodes the per-tag booleans back into a tag list;
+        free-form mode reads the `tags` list directly. Either way we filter
+        against the allowlist once more as a safety net.
         """
-        tags = normalize_tags([str(t) for t in output.tags])  # type: ignore[attr-defined]
+        if field_map is None:
+            raw_tags = [str(t) for t in output.tags]  # type: ignore[attr-defined]
+        else:
+            raw_tags = [
+                tag for fname, tag in field_map.items() if getattr(output, fname, False)
+            ]
+
+        tags = normalize_tags(raw_tags)
         if allowed_set:
             tags = [t for t in tags if t in allowed_set]
-        return ContentAnalysis(summary=output.summary, tags=tags)  # type: ignore[attr-defined]
+        return ContentAnalysis(summary=output.summary, tags=tags[:MAX_TAGS])  # type: ignore[attr-defined]
 
     def analyze(
         self,
@@ -271,12 +326,12 @@ class ContentAgent:
             ThinContentError: if the content is too short/sparse to analyse.
         """
         content = self._validate_content(content)
-        output_type, instructions, allowed_set = self._prepare(allowed_tags)
+        output_type, instructions, allowed_set, field_map = self._prepare(allowed_tags)
         prompt = self._build_prompt(content, title=title, url=url)
         result = self._agent.run_sync(
             prompt, output_type=output_type, instructions=instructions
         )
-        return self._to_result(result.output, allowed_set)
+        return self._to_result(result.output, allowed_set, field_map)
 
     async def analyze_async(
         self,
@@ -292,12 +347,12 @@ class ContentAgent:
             ThinContentError: if the content is too short/sparse to analyse.
         """
         content = self._validate_content(content)
-        output_type, instructions, allowed_set = self._prepare(allowed_tags)
+        output_type, instructions, allowed_set, field_map = self._prepare(allowed_tags)
         prompt = self._build_prompt(content, title=title, url=url)
         result = await self._agent.run(
             prompt, output_type=output_type, instructions=instructions
         )
-        return self._to_result(result.output, allowed_set)
+        return self._to_result(result.output, allowed_set, field_map)
 
     def analyze_chunks(
         self,
