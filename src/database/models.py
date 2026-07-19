@@ -117,6 +117,10 @@ class Content(BaseModel):
 
     scraped_at: datetime = DBField(indexed=True)
 
+
+    last_shown_at: datetime | None = DBField(default=None, indexed=True)
+    last_seen_at: datetime | None = DBField(default=None, indexed=True)
+
     crawl_run_id: str | None = DBField(default=None, indexed=True)
     pipeline_state: ContentPipelineState = DBField(indexed=True)
     pipeline_error: str | None = DBField(default=None)
@@ -147,6 +151,39 @@ class CrawlRun(BaseModel):
 
     github_action_run_id: str | None = DBField(default=None, indexed=True)
 
+
+class InteractionType(str, Enum):
+    IMPRESSION = "impression"
+    OPEN = "open"
+    READ = "read"
+    LIKE = "like"
+    BOOKMARK = "bookmark"
+    SHARE = "share"
+    HIDE = "hide"
+
+INTERACTION_WEIGHTS: dict[InteractionType, float] = {
+    InteractionType.IMPRESSION: 0.1,
+    InteractionType.OPEN: 1.0,
+    InteractionType.READ: 2.0,
+    InteractionType.LIKE: 3.0,
+    InteractionType.BOOKMARK: 3.0,
+    InteractionType.SHARE: 3.0,
+    InteractionType.HIDE: -3.0,
+}
+
+
+def get_weight(interaction_type: InteractionType) -> float:
+    return INTERACTION_WEIGHTS.get(interaction_type, 0.0)
+
+class Interaction(BaseModel):
+    content_id: str = DBField(indexed=True)
+    type: InteractionType = DBField(indexed=True)
+    weight: float = DBField(default=0)
+    # for multiple tags we can add multiple tags
+    # tags are non repeatable so we have the id as tag name only
+    # upsert tags in bulk with atomic increment
+    tag: str = DBField(required=True, indexed=True)
+    created_at: datetime = DBField(indexed=True)
 
 def resolve_type(annotation):
     annotation_str = str(annotation)
