@@ -51,7 +51,7 @@ class FrontQueue(Queue):
 
     def _get_all_urls(self) -> list[URL]:
         database = get_database()
-        limit = os.environ.get("FRONT_QUEUE_INIT_LIMIT", 1000)
+        limit = os.environ.get("QUEUE_INIT_LIMIT", 1000)
         # not using (next_crawl_at <= now() or next_crawl_at is null) as the query as mysql(appwrite) will start doing full table scan for this
         queries = [
             Query.less_than_equal(
