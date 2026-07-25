@@ -2,7 +2,7 @@ from enum import Enum
 import os
 from typing import Any, get_args, get_origin
 
-from .models import Hostname, URL, Content, CrawlRun, Interaction
+from .models import Hostname, URL, Content, CrawlRun, Interaction, TagScore
 from .db_builder import AppwriteSchemaBuilder
 from appwrite.client import Client
 from appwrite.permission import Permission
@@ -94,7 +94,7 @@ def _create_schema_builder() -> AppwriteSchemaBuilder:
 
 def init_database():
     db = _create_schema_builder()
-    for model in [Hostname, URL, Content, CrawlRun, Interaction]:
+    for model in [Hostname, URL, Content, CrawlRun, Interaction, TagScore]:
         db.create_collection_from_dict(_model_to_collection_schema(model))
 
 

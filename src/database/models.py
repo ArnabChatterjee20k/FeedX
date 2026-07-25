@@ -117,7 +117,6 @@ class Content(BaseModel):
 
     scraped_at: datetime = DBField(indexed=True)
 
-
     last_shown_at: datetime | None = DBField(default=None, indexed=True)
     last_seen_at: datetime | None = DBField(default=None, indexed=True)
 
@@ -138,6 +137,9 @@ class Content(BaseModel):
         if not isinstance(value, str):
             return str(value)
         return value
+    
+class ContentWithId(Content):
+    id: str
 
 
 class CrawlRun(BaseModel):
@@ -161,6 +163,7 @@ class InteractionType(str, Enum):
     SHARE = "share"
     HIDE = "hide"
 
+
 INTERACTION_WEIGHTS: dict[InteractionType, float] = {
     InteractionType.IMPRESSION: 0.1,
     InteractionType.OPEN: 1.0,
@@ -175,15 +178,22 @@ INTERACTION_WEIGHTS: dict[InteractionType, float] = {
 def get_weight(interaction_type: InteractionType) -> float:
     return INTERACTION_WEIGHTS.get(interaction_type, 0.0)
 
+
 class Interaction(BaseModel):
-    content_id: str = DBField(indexed=True)
+    # append-only event log / queue: one row per (content, tag) interaction.
+    content_id: str = DBField(required=True, indexed=True)
+    tag: str = DBField(required=True, indexed=True)
     type: InteractionType = DBField(indexed=True)
     weight: float = DBField(default=0)
-    # for multiple tags we can add multiple tags
-    # tags are non repeatable so we have the id as tag name only
-    # upsert tags in bulk with atomic increment
+
+class InteractionWithTime(Interaction):
+    age: int
+
+class TagScore(BaseModel):
     tag: str = DBField(required=True, indexed=True)
-    created_at: datetime = DBField(indexed=True)
+    # we can't store these during create tag as these are the details during a current time. Basically weights derived from the last interaction with the tag
+    recent_weight: float = DBField(default=0)  # H=2  -> continuity source
+    long_weight: float = DBField(default=0)  # H=14 -> relevance source
 
 def resolve_type(annotation):
     annotation_str = str(annotation)
