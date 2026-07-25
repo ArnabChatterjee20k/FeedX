@@ -9,13 +9,14 @@ from scout.logger import get_logger
 from appwrite.query import Query
 from . import Queue
 
+
 # no concurrency to fight since a feed will be for a single user only
 # so its ok to use a single worker only to build the feed
 class FeedQueue(Queue):
     def __init__(self):
         self._queue: deque[ContentRow] = deque()
         self._logger = get_logger("FEED_QUEUE")
-    
+
     def init(self) -> None:
         try:
             self._queue.extend(self._get_all_contents())
@@ -60,11 +61,10 @@ class FeedQueue(Queue):
             Query.equal("pipeline_state", [str(ContentPipelineState.COMPLETED.value)]),
             Query.limit(limit),
             Query.order_asc("scraped_at"),
-            Query.less_than_equal(
-                "scraped_at", datetime.now(timezone.utc).isoformat()
-            ),
+            Query.less_than_equal("scraped_at", datetime.now(timezone.utc).isoformat()),
             Query.greater_than_equal(
-                "scraped_at", (datetime.now(timezone.utc) - timedelta(days=window)).isoformat()
+                "scraped_at",
+                (datetime.now(timezone.utc) - timedelta(days=window)).isoformat(),
             ),
         ]
         rows = database.list_rows(

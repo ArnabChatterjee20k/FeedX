@@ -8,7 +8,7 @@ from ..database.models import (
     Content,
     ContentPipelineState,
     get_weight,
-    ContentWithId
+    ContentWithId,
 )
 from appwrite.operator import Operator
 from appwrite.query import Query
@@ -20,8 +20,10 @@ CONTENT_HALF_LIFE_DAYS = 10
 
 PAGE_SIZE = 1000
 
-def get_decay(weight = 1, event_age = 1 , half_life_value = 1):
-    return weight * 0.5 ** (event_age/half_life_value)
+
+def get_decay(weight=1, event_age=1, half_life_value=1):
+    return weight * 0.5 ** (event_age / half_life_value)
+
 
 class Feed:
     def get_interactions(self) -> list[InteractionWithTime]:
@@ -126,7 +128,7 @@ class Feed:
         database = get_database()
         interactions = self.get_interactions()
         hidden_interaction_tags = set()
-        tags: dict[str,list[InteractionWithTime]] = {}
+        tags: dict[str, list[InteractionWithTime]] = {}
         current = datetime.now(timezone.utc)
         for interaction in interactions:
             if interaction.tag not in tags:
@@ -136,13 +138,21 @@ class Feed:
                 hidden_interaction_tags.add(interaction.tag)
 
         tags_matrix: dict[str, TagScore] = {}
-        
+
         for tag, interactions in tags.items():
             recent = 0
             long = 0
             for interaction in interactions:
-                recent += get_decay(interaction.weight, event_age=interaction.age, half_life_value=RECENT_HALF_LIFE_DAYS)
-                long += get_decay(interaction.weight, event_age=interaction.age, half_life_value=LONG_HALF_LIFE_DAYS)
+                recent += get_decay(
+                    interaction.weight,
+                    event_age=interaction.age,
+                    half_life_value=RECENT_HALF_LIFE_DAYS,
+                )
+                long += get_decay(
+                    interaction.weight,
+                    event_age=interaction.age,
+                    half_life_value=LONG_HALF_LIFE_DAYS,
+                )
             tags_matrix[tag] = TagScore(tag=tag, recent_weight=recent, long_weight=long)
 
         # normalize to [0,1] by the max across tags (guard a non-positive max)
@@ -175,10 +185,12 @@ class Feed:
                     supressed_penalty = 0.1
             if len(tags):
                 relevance /= len(tags)
-            novelty = 1-relevance
+            novelty = 1 - relevance
 
             content_age = (current - content.scraped_at).days
-            age_factor = get_decay(event_age=content_age, half_life_value=CONTENT_HALF_LIFE_DAYS)
+            age_factor = get_decay(
+                event_age=content_age, half_life_value=CONTENT_HALF_LIFE_DAYS
+            )
             shown_factor = 1
             if content.last_shown_at:
                 days_since_last_shown = (current - content.last_shown_at).days
@@ -186,7 +198,7 @@ class Feed:
                 shown_factor = min(max(days_since_last_shown / 3, 0.15), 1)
 
             freshness = age_factor * shown_factor * supressed_penalty
-            
+
             # The 0.5 / 0.2 / 0.3 split is the "50% keep my threads, 20% core, 30% explore" budget
             score = (0.5 * continuity + 0.2 * relevance + 0.3 * novelty) * freshness
             content_matrix[content.id] = score

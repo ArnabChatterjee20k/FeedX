@@ -137,7 +137,8 @@ class Content(BaseModel):
         if not isinstance(value, str):
             return str(value)
         return value
-    
+
+
 class ContentWithId(Content):
     id: str
 
@@ -186,14 +187,17 @@ class Interaction(BaseModel):
     type: InteractionType = DBField(indexed=True)
     weight: float = DBField(default=0)
 
+
 class InteractionWithTime(Interaction):
     age: int
+
 
 class TagScore(BaseModel):
     tag: str = DBField(required=True, indexed=True)
     # we can't store these during create tag as these are the details during a current time. Basically weights derived from the last interaction with the tag
     recent_weight: float = DBField(default=0)  # H=2  -> continuity source
     long_weight: float = DBField(default=0)  # H=14 -> relevance source
+
 
 def resolve_type(annotation):
     annotation_str = str(annotation)
