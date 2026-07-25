@@ -223,8 +223,8 @@ score = (0.5 · continuity + 0.2 · relevance + 0.3 · novelty) × freshness
 ```
 
 The `0.5 / 0.2 / 0.3` split is the "50% keep my threads, 20% core, 30% explore"
-budget. (A stricter variant fills 50/20/30 of the *slots* per bucket to guarantee
-the composition; both use the same per-post numbers above.)
+budget. This weighted sum sets the **ranking**; the same ratios also fill
+50/20/30 of the *slots* per bucket to guarantee the composition — see §4.
 
 ## Worked example
 
@@ -269,3 +269,115 @@ Worked out for P1: `(0.5·1.00 + 0.2·0.47 + 0.3·0.53) × 0.93 = 0.753 × 0.93 
   explore budget doing its job.
 - **P5** is crushed: `crypto` is suppressed and penalises freshness to 0.09.
 - **P6** never appears — already read (`last_seen_at` set), filtered in pooling.
+
+## 4. Selection — budget slots + MMR diversity
+
+Ranking gives an *order*; taking the naive top N gives a **monotone feed** (five
+`rust` posts) and lets the explore budget starve — the biggest scores are almost
+always continuity. Selection turns the `0.5 / 0.2 / 0.3` *weights* (§3) into
+`0.5 / 0.2 / 0.3` *slots*, and diversifies inside each.
+
+**Budget** — split the `N` slots by intent; fill each bucket by its **own**
+signal, **freshness-gated** (`signal × F`) so a stale/hidden post can't be
+re-picked here after freshness sank it in scoring:
+
+| bucket | slots (N = 4) | ranked by |
+|--------|---------------|-----------|
+| continuity | `round(0.5·N)` = 2 | `continuity × F` |
+| relevance  | `round(0.2·N)` = 1 | `relevance × F` |
+| novelty    | `round(0.3·N)` = 1 | `novelty × F` |
+
+**MMR (diversity)** — inside a bucket don't just grab the top signal; subtract a
+penalty for tag-overlap with everything already chosen, so we never stack
+near-duplicate posts:
+
+```
+pick = argmax [ λ · signal_gated − (1 − λ) · max Jaccard(tags, already_chosen) ]   (λ = 0.5)
+
+Jaccard(A, B) = |A ∩ B| / |A ∪ B|    # tag-set overlap: 0 = disjoint, 1 = identical
+```
+
+**Top-up** — `round()` or an exhausted bucket can leave slots empty; fill the
+remainder by overall `score` (already freshness-gated, still MMR-diversified) so
+the feed is never short.
+
+```mermaid
+flowchart LR
+    R[ranked ScoredContent] --> C[continuity bucket<br/>0.5·N slots<br/>MMR by cont×F]
+    C --> V[relevance bucket<br/>0.2·N slots<br/>MMR by rel×F]
+    V --> N[novelty bucket<br/>0.3·N slots<br/>MMR by nov×F]
+    N --> T{short of N?}
+    T -- yes --> U[top-up by score<br/>MMR] --> F[feed]
+    T -- no --> F
+```
+
+### Worked example (N = 4)
+
+Six candidates out of scoring (step 3), with `interest = 0.5·cont + 0.2·rel +
+0.3·nov` and `score = interest × F`:
+
+| post | tags | cont | rel | nov | F | interest | score |
+|------|------|------|-----|-----|-----|----------|-------|
+| A | rust, async | 1.00 | 0.50 | 0.50 | 0.90 | 0.75 | 0.675 |
+| B | rust, tokio | 0.95 | 0.45 | 0.55 | 0.70 | 0.73 | 0.511 |
+| C | databases, sql | 0.40 | 0.80 | 0.20 | 0.90 | 0.42 | 0.378 |
+| D | databases, python | 0.38 | 0.75 | 0.25 | 0.30 | 0.415 | 0.124 |
+| E | ml, python | 0.20 | 0.30 | 0.70 | 0.95 | 0.37 | 0.352 |
+| F | crypto, web | 0.05 | 0.05 | 0.95 | 0.80 | 0.32 | 0.256 |
+
+`_pick_mmr` always ranks by the **freshness-gated** signal (`signal × F`) and
+subtracts the overlap penalty: **`mmr = 0.5·(signal×F) − 0.5·sim`**, where
+`sim = max Jaccard(candidate tags, each already-chosen set)` (`0` when nothing is
+chosen yet). Gated columns:
+
+| post | cont×F | rel×F | nov×F |
+|------|--------|-------|-------|
+| A | 0.900 | 0.450 | 0.450 |
+| B | 0.665 | 0.315 | 0.385 |
+| C | 0.360 | 0.720 | 0.180 |
+| D | 0.114 | 0.225 | 0.075 |
+| E | 0.190 | 0.285 | 0.665 |
+| F | 0.040 | 0.040 | 0.760 |
+
+Quotas for `N = 4`: `continuity = round(0.5·4) = 2`, `relevance = round(0.2·4) =
+1`, `novelty = round(0.3·4) = 1`.
+
+**Continuity bucket (2 slots), by cont×F**
+
+- *Pick 1* — nothing chosen, `sim = 0` for all, `mmr = 0.5·(cont×F)`: A `0.450`,
+  B `0.333`, C `0.180`, … → pick **A**. Chosen tags: `{rust, async}`.
+- *Pick 2* — only B overlaps A: `Jaccard({rust,tokio},{rust,async}) = 1/3`.
+  B: `0.5·0.665 − 0.5·0.333 = 0.166`; C: `0.5·0.360 − 0 = 0.180` → pick **C**, not B.
+  By raw signal B wins, but it's a *second rust post* (penalty) **and** stale
+  (F = 0.70), so a fresh disjoint `databases` post takes the slot.
+
+**Relevance bucket (1 slot), by rel×F** — `sim` vs `{rust,async}`,`{databases,sql}`:
+
+| post | rel×F | sim | mmr |
+|------|-------|-----|-----|
+| B | 0.315 | ⅓ | −0.009 |
+| D | 0.225 | ⅓ (databases) | −0.054 |
+| **E** | 0.285 | 0 | **0.143** |
+| F | 0.040 | 0 | 0.020 |
+
+→ pick **E**. D has the highest *raw* relevance left (0.75) but is stale (F = 0.30)
+**and** overlaps C on `databases`, so it's correctly skipped.
+
+**Novelty bucket (1 slot), by nov×F** — `sim` vs the three chosen sets:
+
+| post | nov×F | sim | mmr |
+|------|-------|-----|-----|
+| B | 0.385 | ⅓ | 0.026 |
+| D | 0.075 | ⅓ | −0.129 |
+| **F** | 0.760 | 0 | **0.380** |
+
+→ pick **F**. `chosen = [A, C, E, F]`, `len == N` → **top-up doesn't run** (it only
+fires when `round()` zeroes a quota or a bucket runs out of candidates).
+
+**Final sort by score → A (0.675), C (0.378), E (0.352), F (0.256).**
+
+Compare the naive top-4-by-score (`A, B, C, E`): selection **dropped B** (the #2
+score — but a redundant, stale second `rust` post) and **added F** (a low-score
+`crypto` explore post a pure ranking would never surface). The two jobs are both
+visible: **composition** (the 30% novelty slot went to F instead of starving) and
+**diversity** (MMR stopped `rust` and `databases`/`python` from taking extra seats).
