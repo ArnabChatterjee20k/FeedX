@@ -1,43 +1,26 @@
 import os
-import asyncio
-from ..database import get_database, APPWRITE_DATABASE_ID
-from ..database.models import Content, Interaction, InteractionType, get_weight
-from ..queue.feed_queue import FeedQueue
+from ..feed.feed import get_interaction_matrix, mark_shown
 from .worker import Worker
-
-EMPTY_QUEUE_POLL_SECONDS = 2
 
 
 class FeedWorker(Worker):
-    def __init__(self, id, feed_queue: FeedQueue):
+    def __init__(self, id):
         super().__init__(id)
-        self._queue = feed_queue
-        self._content = Content
 
     async def start(self):
-        self._running = True
         self._logger.info(f"Worker Started {self._id}", tag="START")
-        while self._running:
-            item = self._queue.pop()
-            if not item:
-                await asyncio.sleep(EMPTY_QUEUE_POLL_SECONDS)
-                continue
+        contents = get_interaction_matrix()
+        if contents:
+            limit = int(os.environ.get("FEED_LIMIT", 10))
+            contents = contents[:limit]
+            # TODO: upload to github
+            print(contents)
 
-            self._content = item
-            if not item.summary:
-                self._logger.warning(
-                    f"Skipped content {item.id}, url = {item.url}, empty summary",
-                )
-                await self.error("Empty summary")
-                continue
-
-            if not item.tags:
-                self._logger.warning(
-                    f"Skipped content {item.id}, url = {item.url}, empty tags",
-                )
-                await self.error("Empty tags")
-                continue
-
+            ok, err = mark_shown(contents)
+            if not ok:
+                self._logger.error("Failed to mark shown", tag="SHOWN", error=err)
+            else:
+                self._logger.info(f"Marked {len(contents)} shown", tag="SHOWN")
     def stop(self):
         return super().stop()
 

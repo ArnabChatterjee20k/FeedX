@@ -18,9 +18,6 @@ def get_content_worker_pool(workers: int = 1):
 
 
 def get_feed_worker_pool(workers: int = 1):
-    from .queue.feed_queue import FeedQueue
     from .workers.feed_worker import FeedWorker
 
-    feed_queue = FeedQueue()
-    feed_queue.init()
-    return WorkerPool(lambda id: FeedWorker(id, feed_queue), workers)
+    return WorkerPool(lambda id: FeedWorker(id), workers)

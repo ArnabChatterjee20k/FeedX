@@ -1,7 +1,7 @@
 import typer
 import asyncio
 from dotenv import load_dotenv
-from . import get_worker_pool, get_content_worker_pool
+from . import get_worker_pool, get_content_worker_pool, get_feed_worker_pool
 from .database import init_database
 
 load_dotenv()
@@ -45,6 +45,9 @@ def crawl(workers: int = 1):
 def content_run(workers: int = 1):
     asyncio.run(_run_pool(get_content_worker_pool(workers)))
 
+@cli.command("feed")
+def get_feed():
+    asyncio.run(_run_pool(get_feed_worker_pool()))
 
 @crawler.command("stats")
 def stats():
