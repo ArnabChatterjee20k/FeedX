@@ -1,5 +1,5 @@
 import os
-from ..feed.feed import get_interaction_matrix, mark_shown
+from ..feed.feed import get_interaction_matrix, select_feed, mark_shown
 from .worker import Worker
 
 
@@ -7,12 +7,12 @@ class FeedWorker(Worker):
     def __init__(self, id):
         super().__init__(id)
 
-    async def start(self):
+    def start(self):
         self._logger.info(f"Worker Started {self._id}", tag="START")
-        contents = get_interaction_matrix()
-        if contents:
+        scored = get_interaction_matrix()
+        if scored:
             limit = int(os.environ.get("FEED_LIMIT", 10))
-            contents = contents[:limit]
+            contents = select_feed(scored, limit)
             # TODO: upload to github
             print(contents)
 
@@ -21,6 +21,7 @@ class FeedWorker(Worker):
                 self._logger.error("Failed to mark shown", tag="SHOWN", error=err)
             else:
                 self._logger.info(f"Marked {len(contents)} shown", tag="SHOWN")
+
     def stop(self):
         return super().stop()
 

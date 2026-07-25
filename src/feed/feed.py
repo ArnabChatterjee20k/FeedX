@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from ..database import get_database, APPWRITE_DATABASE_ID
 from ..database.models import (
@@ -19,10 +20,41 @@ CONTENT_HALF_LIFE_DAYS = 10
 
 PAGE_SIZE = 1000
 
+# feed selection: the "50% keep my threads, 20% core, 30% explore" budget,
+# diversified with MMR (Jaccard tag-overlap) so we don't stack near-duplicates.
+FEED_CONTINUITY_RATIO = 0.5
+FEED_RELEVANCE_RATIO = 0.2
+FEED_NOVELTY_RATIO = 0.3
+MMR_LAMBDA = 0.5
+
+
+@dataclass
+class ScoredContent:
+    content: ContentWithId
+    continuity: float
+    relevance: float
+    novelty: float
+    interest: float  # ungated blend; interest × freshness == content.score
+    freshness: float
+
 
 def get_decay(weight=1, event_age=1, half_life_value=1):
     return weight * 0.5 ** (event_age / half_life_value)
 
+
+def _as_utc(dt: datetime) -> datetime:
+    # appwrite datetimes may deserialize tz-naive; treat naive as UTC so
+    # subtraction against datetime.now(timezone.utc) never raises.
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    union = a | b
+    if not union:
+        return 0.0
+    return len(a & b) / len(union)
 
 
 def get_interactions() -> list[InteractionWithTime]:
@@ -48,7 +80,7 @@ def get_interactions() -> list[InteractionWithTime]:
             break
 
         for row in rows.rows:
-            age = (current - datetime.fromisoformat(row.createdat)).days
+            age = (current - _as_utc(datetime.fromisoformat(row.createdat))).days
             tags.append(InteractionWithTime(**row.data, age=age))
 
         last_tag = rows.rows[-1].id
@@ -56,6 +88,7 @@ def get_interactions() -> list[InteractionWithTime]:
             break
 
     return tags
+
 
 def add_interactions(
     content_id: str,
@@ -74,12 +107,11 @@ def add_interactions(
             }
             for tag in tags
         ]
-        database.create_rows(
-            APPWRITE_DATABASE_ID, Interaction.__name__, rows=log_rows
-        )
+        database.create_rows(APPWRITE_DATABASE_ID, Interaction.__name__, rows=log_rows)
         return True, None
     except Exception as e:
         return False, e
+
 
 def get_content(window_days: int | None = None) -> list[ContentWithId]:
     window_days = window_days or int(os.environ.get("FEED_WINDOW_DAY", 30))
@@ -92,9 +124,7 @@ def get_content(window_days: int | None = None) -> list[ContentWithId]:
     cursor = None
     while True:
         queries = [
-            Query.equal(
-                "pipeline_state", [str(ContentPipelineState.COMPLETED.value)]
-            ),
+            Query.equal("pipeline_state", [str(ContentPipelineState.COMPLETED.value)]),
             Query.greater_than_equal("scraped_at", since.isoformat()),
             Query.less_than_equal("scraped_at", now.isoformat()),
             Query.order_desc("scraped_at"),
@@ -122,7 +152,8 @@ def get_content(window_days: int | None = None) -> list[ContentWithId]:
 
     return content
 
-def get_interaction_matrix() -> list[ContentWithId]:
+
+def get_interaction_matrix() -> list[ScoredContent]:
     database = get_database()
     interactions = get_interactions()
     hidden_interaction_tags = set()
@@ -169,6 +200,7 @@ def get_interaction_matrix() -> list[ContentWithId]:
     )
 
     contents = get_content()
+    scored: list[ScoredContent] = []
     for content in contents:
         tags = content.tags
         continuity = 0
@@ -184,23 +216,103 @@ def get_interaction_matrix() -> list[ContentWithId]:
             relevance /= len(tags)
         novelty = 1 - relevance
 
-        content_age = (current - content.scraped_at).days
+        content_age = (current - _as_utc(content.scraped_at)).days
         age_factor = get_decay(
             event_age=content_age, half_life_value=CONTENT_HALF_LIFE_DAYS
         )
         shown_factor = 1
         if content.last_shown_at:
-            days_since_last_shown = (current - content.last_shown_at).days
+            days_since_last_shown = (current - _as_utc(content.last_shown_at)).days
             # clamping days_since_last_shown/3 to range 0.15 and 1
             shown_factor = min(max(days_since_last_shown / 3, 0.15), 1)
 
         freshness = age_factor * shown_factor * supressed_penalty
 
-        # The 0.5 / 0.2 / 0.3 split is the "50% keep my threads, 20% core, 30% explore" budget
-        score = (0.5 * continuity + 0.2 * relevance + 0.3 * novelty) * freshness
-        content.score = score
+        # freshness gates the blend; the budget split lives in select_feed
+        interest = (
+            FEED_CONTINUITY_RATIO * continuity
+            + FEED_RELEVANCE_RATIO * relevance
+            + FEED_NOVELTY_RATIO * novelty
+        )
+        content.score = interest * freshness
+        scored.append(
+            ScoredContent(
+                content=content,
+                continuity=continuity,
+                relevance=relevance,
+                novelty=novelty,
+                interest=interest,
+                freshness=freshness,
+            )
+        )
 
-    return sorted(contents, key=lambda content: content.score, reverse=True)
+    return sorted(scored, key=lambda s: s.content.score, reverse=True)
+
+
+def _pick_mmr(
+    candidates: list[ScoredContent],
+    signal: str,
+    chosen_ids: set[str],
+    chosen_tag_sets: list[set[str]],
+) -> ScoredContent | None:
+    # MMR: balance the bucket's signal against tag-overlap with what is
+    # already chosen, so we favour high-signal-but-diverse content.
+    best = None
+    best_mmr = None
+    for item in candidates:
+        if item.content.id in chosen_ids:
+            continue
+        relevance = getattr(item, signal) * item.freshness
+        tag_set = set(item.content.tags)
+        sim = max((_jaccard(tag_set, s) for s in chosen_tag_sets), default=0.0)
+        mmr = MMR_LAMBDA * relevance - (1 - MMR_LAMBDA) * sim
+        if best_mmr is None or mmr > best_mmr:
+            best_mmr = mmr
+            best = item
+    return best
+
+
+def select_feed(scored: list[ScoredContent], limit: int) -> list[ContentWithId]:
+    # split the feed budget across the three intents, then fill each bucket
+    # with MMR; a final pass tops up from the leftovers (by score) so rounding
+    # or an under-filled bucket never leaves the feed short.
+    buckets = [
+        ("continuity", round(limit * FEED_CONTINUITY_RATIO)),
+        ("relevance", round(limit * FEED_RELEVANCE_RATIO)),
+        ("novelty", round(limit * FEED_NOVELTY_RATIO)),
+    ]
+
+    chosen: list[ScoredContent] = []
+    chosen_ids: set[str] = set()
+    chosen_tag_sets: list[set[str]] = []
+
+    def take(signal: str, quota: int):
+        for _ in range(quota):
+            if len(chosen) >= limit:
+                return
+            best = _pick_mmr(scored, signal, chosen_ids, chosen_tag_sets)
+            if best is None:
+                return
+            chosen.append(best)
+            chosen_ids.add(best.content.id)
+            chosen_tag_sets.append(set(best.content.tags))
+
+    # for each signal picking the best content
+    for signal, quota in buckets:
+        take(signal, quota)
+
+    # top up any remaining slots by overall interest (freshness-gated in
+    # _pick_mmr, so equivalent to ranking by score, still MMR-diversified)
+    while len(chosen) < limit:
+        best = _pick_mmr(scored, "interest", chosen_ids, chosen_tag_sets)
+        if best is None:
+            break
+        chosen.append(best)
+        chosen_ids.add(best.content.id)
+        chosen_tag_sets.append(set(best.content.tags))
+
+    chosen.sort(key=lambda s: s.content.score, reverse=True)
+    return [s.content for s in chosen]
 
 
 def mark_shown(contents: list[ContentWithId]) -> tuple[bool, Exception | None]:
@@ -219,4 +331,3 @@ def mark_shown(contents: list[ContentWithId]) -> tuple[bool, Exception | None]:
         return True, None
     except Exception as e:
         return False, e
-

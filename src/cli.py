@@ -24,6 +24,12 @@ def init():
     init_database()
 
 
+@cli.command("feed")
+def get_feed():
+    pool = get_feed_worker_pool()
+    pool.start()
+
+
 async def _run_pool(pool):
     try:
         await pool.start()
@@ -45,9 +51,6 @@ def crawl(workers: int = 1):
 def content_run(workers: int = 1):
     asyncio.run(_run_pool(get_content_worker_pool(workers)))
 
-@cli.command("feed")
-def get_feed():
-    asyncio.run(_run_pool(get_feed_worker_pool()))
 
 @crawler.command("stats")
 def stats():

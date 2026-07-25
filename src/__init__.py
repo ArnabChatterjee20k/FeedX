@@ -20,4 +20,5 @@ def get_content_worker_pool(workers: int = 1):
 def get_feed_worker_pool(workers: int = 1):
     from .workers.feed_worker import FeedWorker
 
-    return WorkerPool(lambda id: FeedWorker(id), workers)
+    # no worker pool needed for this as it is a single step process
+    return FeedWorker(id=1)
