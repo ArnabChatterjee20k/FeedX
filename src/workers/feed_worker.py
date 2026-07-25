@@ -1,5 +1,6 @@
 import os
 from ..feed.feed import get_interaction_matrix, select_feed, mark_shown
+from ..feed.github import publish_feed
 from .worker import Worker
 
 
@@ -13,8 +14,11 @@ class FeedWorker(Worker):
         if scored:
             limit = int(os.environ.get("FEED_LIMIT", 10))
             contents = select_feed(scored, limit)
-            # TODO: upload to github
-            print(contents)
+
+            published, err = publish_feed(contents)
+            if not published:
+                self._logger.error("Failed to publish feed", tag="PUBLISH", error=err)
+                return
 
             ok, err = mark_shown(contents)
             if not ok:
