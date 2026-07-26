@@ -11,7 +11,9 @@ services:
     ports:
       - "11434:11434"
     volumes:
-      - models:/root/.ollama
+      # local: named volume `models`. CI sets OLLAMA_DATA to a host dir that
+      # actions/cache persists, so the model isn't re-pulled every run.
+      - ${OLLAMA_DATA:-models}:/root/.ollama
     healthcheck:
       # healthy only once the first MODELS entry is downloaded, so `up --wait`
       # doesn't return while the model is still pulling. $$ -> literal $ so the

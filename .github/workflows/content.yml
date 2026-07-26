@@ -34,15 +34,28 @@ jobs:
       WORKER_MAX_RUNTIME_SECONDS: "1500"
       OLLAMA_URL: http://localhost:11434/v1
       OLLAMA_MODEL: ${{ vars.OLLAMA_MODEL || 'llama3.2:1b' }}
+      # host dir bind-mounted into the container (see docker-compsoe.yaml) so the
+      # cached model survives across runs instead of being re-pulled each time.
+      OLLAMA_DATA: ./.ollama-cache
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-feedx
+      - name: Cache Ollama model
+        uses: actions/cache@v4
+        with:
+          path: .ollama-cache
+          key: ollama-${{ runner.os }}-${{ vars.OLLAMA_MODEL || 'llama3.2:1b' }}
       - name: Start Ollama (docker compose)
         # --wait blocks until the server is healthy and the model pull has
-        # finished, so the endpoint is ready before the content run.
+        # finished; on a cache hit the model is already present so no pull happens.
         run: docker compose -f docker-compsoe.yaml up -d --wait
       - name: Run content pipeline
         run: uv run python -m src.cli content run --workers "${{ github.event.inputs.workers || '1' }}"
       - name: Stop Ollama
         if: always()
         run: docker compose -f docker-compsoe.yaml down
+      - name: Make model cache readable for save
+        # the container writes model files as root; hand them back to the runner
+        # user so actions/cache can read them in its post-run save step.
+        if: always()
+        run: sudo chown -R "$USER" .ollama-cache 2>/dev/null || true
