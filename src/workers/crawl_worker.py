@@ -26,6 +26,8 @@ HOSTNAME_LEASE_SECONDS = 10 * 60
 # burn its whole timeout idling on hosts that are only cooling down.
 CRAWL_IDLE_TIMEOUT_SECONDS = int(os.environ.get("CRAWL_IDLE_TIMEOUT_SECONDS", 60))
 SOURCE_REFRESH_SECONDS = int(os.environ.get("SOURCE_REFRESH_SECONDS", 6 * 60 * 60))
+# headless by default so CI runners work; set HEADLESS=false locally to watch.
+HEADLESS = os.environ.get("HEADLESS", "true").lower() not in ("false", "0", "no")
 
 
 class CrawlWorker(Worker):
@@ -33,7 +35,7 @@ class CrawlWorker(Worker):
         super().__init__(id)
         self._back_queue = back_queue
         self._scheduler_queue = scheduler_queue
-        self._scout = Scout(browser_config=BrowserManagerConfig(headless=False))
+        self._scout = Scout(browser_config=BrowserManagerConfig(headless=HEADLESS))
         self._url = None
         self._scheduled_item = None
 

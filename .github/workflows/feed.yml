@@ -25,13 +25,13 @@ jobs:
       CRAWL_ID: ${{ github.run_id }}
       FEED_WINDOW_DAY: "30"
       FEED_LIMIT: "10"
-      # publishes to a SEPARATE content repo, so it needs a PAT with
-      # contents:write on that repo — the auto GITHUB_TOKEN can't reach it.
-      # (a secret can't be named GITHUB_TOKEN, so store it as FEED_GITHUB_TOKEN.)
-      GITHUB_TOKEN: ${{ secrets.FEED_GITHUB_TOKEN }}
-      GITHUB_FEED_REPO: ${{ vars.GITHUB_FEED_REPO }}
-      GITHUB_FEED_BRANCH: ${{ vars.GITHUB_FEED_BRANCH || 'main' }}
-      GITHUB_FEED_DIR: ${{ vars.GITHUB_FEED_DIR || 'feeds' }}
+      # publishes to a SEPARATE content repo, so FEED_TOKEN is a PAT with
+      # contents:write on that repo (the auto GITHUB_TOKEN can't reach it). Names
+      # avoid the GITHUB_ prefix so they're read verbatim — no mapping.
+      FEED_TOKEN: ${{ secrets.FEED_TOKEN }}
+      FEED_REPO: ${{ vars.FEED_REPO }}
+      FEED_BRANCH: ${{ vars.FEED_BRANCH || 'main' }}
+      FEED_DIR: ${{ vars.FEED_DIR || 'feeds' }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-feedx

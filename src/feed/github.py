@@ -14,14 +14,15 @@ from ..database.models import ContentWithId
 _logger = get_logger("FEED_GITHUB")
 
 # GitHub REST Contents API. All config comes from the environment so it can be
-# set per deploy / GitHub Action without touching code:
-#   GITHUB_TOKEN        PAT (or Actions token) with `contents:write` on the repo
-#   GITHUB_FEED_REPO    target repo as "owner/name" (a separate content repo)
-#   GITHUB_FEED_BRANCH  branch to commit to            (default: main)
-#   GITHUB_FEED_DIR     directory to write dated files  (default: feeds)
-#   GITHUB_API_URL      API base, for GH Enterprise     (default: api.github.com)
+# set per deploy / GitHub Action without touching code. Names avoid the GITHUB_
+# prefix (reserved by Actions) so they're stored and read verbatim everywhere:
+#   FEED_TOKEN     PAT with `contents:write` on the content repo
+#   FEED_REPO      target repo as "owner/name" (a separate content repo)
+#   FEED_BRANCH    branch to commit to            (default: main)
+#   FEED_DIR       directory to write dated files  (default: feeds)
+#   GITHUB_API_URL API base, for GH Enterprise     (default: api.github.com)
 #
-# Each build writes one file per day: `<GITHUB_FEED_DIR>/<YYYY-MM-DD>.json`, so a
+# Each build writes one file per day: `<FEED_DIR>/<YYYY-MM-DD>.json`, so a
 # static-site generator can glob the directory and render a page per date. A
 # re-run on the same day overwrites that day's file (latest build wins).
 GITHUB_API_VERSION = "2022-11-28"
@@ -32,17 +33,17 @@ class GithubConfigError(RuntimeError):
 
 
 def _config() -> dict:
-    token = os.environ.get("GITHUB_TOKEN")
-    repo = os.environ.get("GITHUB_FEED_REPO")
+    token = os.environ.get("FEED_TOKEN")
+    repo = os.environ.get("FEED_REPO")
     if not token or not repo:
         raise GithubConfigError(
-            "GITHUB_TOKEN and GITHUB_FEED_REPO must be set to publish the feed"
+            "FEED_TOKEN and FEED_REPO must be set to publish the feed"
         )
     return {
         "token": token,
         "repo": repo,
-        "branch": os.environ.get("GITHUB_FEED_BRANCH", "main"),
-        "dir": os.environ.get("GITHUB_FEED_DIR", "feeds").strip("/"),
+        "branch": os.environ.get("FEED_BRANCH", "main"),
+        "dir": os.environ.get("FEED_DIR", "feeds").strip("/"),
         "api": os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/"),
     }
 
@@ -160,11 +161,9 @@ def publish_feed(contents: list[ContentWithId]) -> tuple[bool, Exception | None]
 # Secret VALUES are write-only (GitHub never returns them), so a dry run can only
 # compare a secret's presence; variable values are readable and diffed exactly.
 
-# A GitHub Actions secret cannot be named GITHUB_TOKEN, so the local .env's
-# GITHUB_TOKEN (the feed-publish PAT) is pushed under this name; feed.yml maps it
-# back to GITHUB_TOKEN.
-ACTIONS_SECRET_RENAME = {"GITHUB_TOKEN": "FEED_GITHUB_TOKEN"}
-
+# Names are synced verbatim (no renaming), so a value is identical in .env, in the
+# Actions store, and in the code. GitHub reserves the GITHUB_ prefix for Actions
+# secret/variable names, so just don't use it — the feed config uses FEED_* names.
 _ASSIGN = re.compile(r"^([A-Z][A-Z0-9_]*)=")
 
 
@@ -308,10 +307,12 @@ def sync_secrets(
     rows: list[dict] = []
 
     for source in secret_names:
-        target = ACTIONS_SECRET_RENAME.get(source, source)
+        target = source
         present = target in existing_secrets
         value = values.get(source)
-        if not value:
+        if target.startswith("GITHUB_"):
+            action = "error: name cannot start with GITHUB_ (add a rename)"
+        elif not value:
             action = "skip (no value)"
         elif dry_run:
             action = "update" if present else "create"
@@ -328,7 +329,9 @@ def sync_secrets(
         present = target in existing_vars
         value = values.get(source)
         unchanged = present and existing_vars.get(target) == value
-        if not value:
+        if target.startswith("GITHUB_"):
+            action = "error: name cannot start with GITHUB_ (add a rename)"
+        elif not value:
             action = "skip (no value)"
         elif unchanged:
             action = "unchanged"
