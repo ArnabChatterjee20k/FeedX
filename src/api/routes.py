@@ -281,7 +281,7 @@ def get_back_queue():
     back_queue = BackQueue()
     back_queue.init(list(front_queue))
 
-    return back_queue.get_hostnames()
+    return back_queue.get_backqueue()
 
 
 @router.get("/scheduler-queue")

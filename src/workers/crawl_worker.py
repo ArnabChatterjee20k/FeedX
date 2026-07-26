@@ -21,6 +21,7 @@ import inspect
 crawl_id = os.environ.get("CRAWL_ID")
 
 HOSTNAME_LEASE_SECONDS = 10 * 60
+SOURCE_REFRESH_SECONDS = int(os.environ.get("SOURCE_REFRESH_SECONDS", 6 * 60 * 60))
 
 
 class CrawlWorker(Worker):
@@ -538,6 +539,15 @@ class CrawlWorker(Worker):
             FIVE_MINUTES = 5 * 60
             OFFSET_SECONDS = 30
             self._scheduled_item.add_seconds(FIVE_MINUTES + OFFSET_SECONDS)
+            bumped, bump_err = await asyncio.to_thread(
+                self._bump_source_next_crawl, url.id
+            )
+            if not bumped:
+                self._logger.error(
+                    f"Failed to bump next_crawl_at for source {url.id}",
+                    tag="SOURCE_GATE",
+                    error=bump_err,
+                )
             document = await self._scout.scrape(url.url)
             if not isinstance(document, Document):
                 self._logger.error(
@@ -580,6 +590,22 @@ class CrawlWorker(Worker):
                 error=err,
             )
             await self.error()
+
+    def _bump_source_next_crawl(self, url_id) -> tuple[bool, None | Exception]:
+        try:
+            database = get_database()
+            next_crawl_at = (
+                datetime.now(timezone.utc) + timedelta(seconds=SOURCE_REFRESH_SECONDS)
+            ).isoformat()
+            database.update_row(
+                database_id=APPWRITE_DATABASE_ID,
+                table_id=URL.__name__,
+                row_id=url_id,
+                data={"next_crawl_at": next_crawl_at},
+            )
+            return True, None
+        except Exception as e:
+            return False, e
 
     def _extract_links(self, documents, hostname: str, source_url: str) -> set[str]:
         links: set[str] = set()

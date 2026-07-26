@@ -43,3 +43,6 @@ class BackQueue(Queue):
 
     def get_hostnames(self) -> list[str]:
         return list(self._queues.keys())
+
+    def get_backqueue(self) -> list[dict[str, list]]:
+        return self._queues
