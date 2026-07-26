@@ -25,8 +25,13 @@ class ContentWorker(Worker):
             # atomically claims the row (PENDING -> SUMMARIZING) before returning
             item = await self._queue.pop_async()
             if not item:
-                await asyncio.sleep(EMPTY_QUEUE_POLL_SECONDS)
-                continue
+                # pop_async already refilled from the DB and found nothing, so the
+                # queue is drained — stop instead of polling an empty queue forever.
+                self._logger.info(
+                    "No pending content left, stopping worker", tag="DRAIN"
+                )
+                self._running = False
+                break
 
             # track the current item so the terminal hooks can act on it
             self._content = item

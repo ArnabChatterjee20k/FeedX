@@ -5,12 +5,19 @@ from .worker import Worker
 
 
 class WorkerPool:
-    def __init__(self, worker_factory: Callable[[int], Worker], workers: int = 1):
+    def __init__(
+        self,
+        worker_factory: Callable[[int], Worker],
+        workers: int = 1,
+        max_runtime: float | None = None,
+    ):
         self._factory = worker_factory
         self._workers_count = workers
         self._worker_tasks: list[tuple[Worker, asyncio.Task]] = []
         self._logger = get_logger("WorkerPool")
         self._stop_event = asyncio.Event()
+        # graceful upper bound on a run; None = unbounded (rely on idle-stop)
+        self._max_runtime = max_runtime
 
     def _worker_done(self, task: asyncio.Task):
         try:
@@ -31,8 +38,27 @@ class WorkerPool:
             task = asyncio.create_task(worker.start())
             task.add_done_callback(self._worker_done)
             self._worker_tasks.append((worker, task))
-        # keep the pool coroutine alive until stop() is called
-        await self._stop_event.wait()
+
+        # return as soon as ANY of these happens: every worker exits on its own
+        # (queue drained / idle), stop() is called, or the max runtime elapses.
+        tasks = [task for _, task in self._worker_tasks]
+        workers_done = asyncio.gather(*tasks, return_exceptions=True)
+        stop_wait = asyncio.ensure_future(self._stop_event.wait())
+        try:
+            await asyncio.wait(
+                {workers_done, stop_wait},
+                timeout=self._max_runtime,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not workers_done.done() and not self._stop_event.is_set():
+                self._logger.info(
+                    f"Max runtime {self._max_runtime}s reached, stopping",
+                    tag="MAX_RUNTIME",
+                )
+            elif workers_done.done():
+                self._logger.info("All workers finished, stopping", tag="DRAIN")
+        finally:
+            stop_wait.cancel()
 
     async def stop(self):
         self._stop_event.set()

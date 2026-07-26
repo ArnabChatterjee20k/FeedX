@@ -22,6 +22,9 @@ import inspect
 crawl_id = os.environ.get("CRAWL_ID")
 
 HOSTNAME_LEASE_SECONDS = 10 * 60
+# stop a worker once no hostname has been due for this long, so a CI run doesn't
+# burn its whole timeout idling on hosts that are only cooling down.
+CRAWL_IDLE_TIMEOUT_SECONDS = int(os.environ.get("CRAWL_IDLE_TIMEOUT_SECONDS", 60))
 SOURCE_REFRESH_SECONDS = int(os.environ.get("SOURCE_REFRESH_SECONDS", 6 * 60 * 60))
 
 
@@ -43,10 +46,25 @@ class CrawlWorker(Worker):
             await self._run()
 
     async def _run(self):
+        loop = asyncio.get_running_loop()
+        idle_since = None
         while self._running:
             item = await self._scheduler_queue.pop_async()
             if not item:
+                # nothing due right now; start (or keep) the idle clock and stop
+                # once we've been idle past the threshold.
+                if idle_since is None:
+                    idle_since = loop.time()
+                elif loop.time() - idle_since >= CRAWL_IDLE_TIMEOUT_SECONDS:
+                    self._logger.info(
+                        f"No due hostnames for {CRAWL_IDLE_TIMEOUT_SECONDS}s, stopping worker",
+                        tag="DRAIN",
+                    )
+                    self._running = False
+                    break
                 continue
+            # got work — reset the idle clock
+            idle_since = None
             hostname = item.hostname
             # atomic hostname lease: only the worker/process that pushes
             # next_allowed_at into the future (while it is still due) may crawl

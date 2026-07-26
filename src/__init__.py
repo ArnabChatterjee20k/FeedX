@@ -1,11 +1,23 @@
+import os
 from .queue import init_queues
 from .workers.worker_pool import WorkerPool
 from .workers.crawl_worker import CrawlWorker
 
 
+def _max_runtime() -> float | None:
+    # graceful upper bound for a pool run (seconds). Set below the CI job timeout
+    # so the pool stops itself and cleans up instead of being hard-killed.
+    value = os.environ.get("WORKER_MAX_RUNTIME_SECONDS")
+    return float(value) if value else None
+
+
 def get_worker_pool(workers: int = 1):
     _, back_queue, scheduler_queue = init_queues()
-    return WorkerPool(lambda id: CrawlWorker(id, back_queue, scheduler_queue), workers)
+    return WorkerPool(
+        lambda id: CrawlWorker(id, back_queue, scheduler_queue),
+        workers,
+        max_runtime=_max_runtime(),
+    )
 
 
 def get_content_worker_pool(workers: int = 1):
@@ -14,7 +26,11 @@ def get_content_worker_pool(workers: int = 1):
 
     content_queue = ContentQueue()
     content_queue.init()
-    return WorkerPool(lambda id: ContentWorker(id, content_queue), workers)
+    return WorkerPool(
+        lambda id: ContentWorker(id, content_queue),
+        workers,
+        max_runtime=_max_runtime(),
+    )
 
 
 def get_feed_worker_pool(workers: int = 1):
