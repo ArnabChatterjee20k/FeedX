@@ -8,6 +8,7 @@ from ..database import get_database, APPWRITE_DATABASE_ID
 from appwrite.query import Query
 from appwrite.id import ID
 from ..database.models import CrawlState, URL, Content, ContentPipelineState, Hostname
+from ..discovery import is_ignored
 from ..queue.models import URLRow
 import os, random, re
 from datetime import datetime, timezone, timedelta
@@ -143,8 +144,9 @@ class CrawlWorker(Worker):
                     scrolling=ScrollingRule(
                         virtual_scroll=VirtualScrollConfig(
                             container_selector="body",
-                            scroll_count=12,
+                            scroll_count=1200,
                             wait_after_scroll=0.1,
+                            scroll_interval=5,
                             scroll_by="container_height",
                         )
                     ),
@@ -158,6 +160,11 @@ class CrawlWorker(Worker):
                 documents: list[Document] = list(
                     filter(lambda document: isinstance(document, Document), documents)
                 )
+                # drop nav/auth/search/etc pages Scout discovered so we never turn
+                # junk into Content (same shared blocklist source discovery uses)
+                documents = [
+                    document for document in documents if not is_ignored(document.url)
+                ]
                 hashes = {
                     document.url: HTMLIntentChunker(document.html)
                     .get_fingerprint()
@@ -555,6 +562,17 @@ class CrawlWorker(Worker):
                     tag="SOURCE_GATE",
                     error=bump_err,
                 )
+            self._scout.set_scrolling_rule(
+                ScrollingRule(
+                    virtual_scroll=VirtualScrollConfig(
+                        container_selector="body",
+                        scroll_count=1200,
+                        wait_after_scroll=0.1,
+                        scroll_interval=5,
+                        scroll_by="container_height",
+                    )
+                )
+            )
             document = await self._scout.scrape(url.url)
             if not isinstance(document, Document):
                 self._logger.error(
