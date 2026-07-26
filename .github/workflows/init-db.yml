@@ -1,0 +1,21 @@
+name: init-db
+
+# One-off (manual) schema setup: creates the Appwrite tables from the models.
+# Idempotent — safe to re-run when models change.
+on:
+  workflow_dispatch:
+
+jobs:
+  init:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      APPWRITE_ENDPOINT: ${{ secrets.APPWRITE_ENDPOINT }}
+      APPWRITE_PROJECT_ID: ${{ secrets.APPWRITE_PROJECT_ID }}
+      APPWRITE_API_KEY: ${{ secrets.APPWRITE_API_KEY }}
+      APPWRITE_DATABASE_ID: ${{ secrets.APPWRITE_DATABASE_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-feedx
+      - name: Initialise database schema
+        run: uv run feedx init

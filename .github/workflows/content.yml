@@ -1,0 +1,48 @@
+name: content
+
+# Content pipeline: takes PENDING content, runs the LLM agent, writes
+# summary + tags, marks it COMPLETED (feed-ready).
+on:
+  schedule:
+    - cron: "0 4 * * *" # daily, offset after crawl so fresh content is enriched
+  workflow_dispatch:
+    inputs:
+      workers:
+        description: number of content workers
+        default: "1"
+
+concurrency:
+  group: content
+  cancel-in-progress: false
+
+jobs:
+  content:
+    # Ollama runs on the runner itself via docker compose (CPU-only). Keep the
+    # model small (OLLAMA_MODEL, default llama3.2:1b) so the pull + inference fit
+    # the timeout; a bigger model needs a self-hosted / GPU runner.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      APPWRITE_ENDPOINT: ${{ secrets.APPWRITE_ENDPOINT }}
+      APPWRITE_PROJECT_ID: ${{ secrets.APPWRITE_PROJECT_ID }}
+      APPWRITE_API_KEY: ${{ secrets.APPWRITE_API_KEY }}
+      APPWRITE_DATABASE_ID: ${{ secrets.APPWRITE_DATABASE_ID }}
+      ENVIRONMENT: production
+      CRAWL_ID: ${{ github.run_id }}
+      # stop gracefully before the 30m hard timeout; content also idle-stops as
+      # soon as no PENDING rows remain.
+      WORKER_MAX_RUNTIME_SECONDS: "1500"
+      OLLAMA_URL: http://localhost:11434/v1
+      OLLAMA_MODEL: ${{ vars.OLLAMA_MODEL || 'llama3.2:1b' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-feedx
+      - name: Start Ollama (docker compose)
+        # --wait blocks until the server is healthy and the model pull has
+        # finished, so the endpoint is ready before the content run.
+        run: docker compose -f docker-compsoe.yaml up -d --wait
+      - name: Run content pipeline
+        run: uv run feedx content run --workers "${{ github.event.inputs.workers || '1' }}"
+      - name: Stop Ollama
+        if: always()
+        run: docker compose -f docker-compsoe.yaml down

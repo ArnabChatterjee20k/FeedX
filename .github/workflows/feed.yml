@@ -1,0 +1,39 @@
+name: feed
+
+# Feed builder: ranks the last-N-days COMPLETED content, selects the feed
+# (budget + MMR), publishes feeds/<YYYY-MM-DD>.json to the content repo, and
+# marks the selected content as shown. One-shot — runs and exits.
+on:
+  schedule:
+    - cron: "0 5 * * *" # daily, 05:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: feed
+  cancel-in-progress: false
+
+jobs:
+  feed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      APPWRITE_ENDPOINT: ${{ secrets.APPWRITE_ENDPOINT }}
+      APPWRITE_PROJECT_ID: ${{ secrets.APPWRITE_PROJECT_ID }}
+      APPWRITE_API_KEY: ${{ secrets.APPWRITE_API_KEY }}
+      APPWRITE_DATABASE_ID: ${{ secrets.APPWRITE_DATABASE_ID }}
+      ENVIRONMENT: production
+      CRAWL_ID: ${{ github.run_id }}
+      FEED_WINDOW_DAY: "30"
+      FEED_LIMIT: "10"
+      # publishes to a SEPARATE content repo, so it needs a PAT with
+      # contents:write on that repo — the auto GITHUB_TOKEN can't reach it.
+      # (a secret can't be named GITHUB_TOKEN, so store it as FEED_GITHUB_TOKEN.)
+      GITHUB_TOKEN: ${{ secrets.FEED_GITHUB_TOKEN }}
+      GITHUB_FEED_REPO: ${{ vars.GITHUB_FEED_REPO }}
+      GITHUB_FEED_BRANCH: ${{ vars.GITHUB_FEED_BRANCH || 'main' }}
+      GITHUB_FEED_DIR: ${{ vars.GITHUB_FEED_DIR || 'feeds' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-feedx
+      - name: Build & publish feed
+        run: uv run feedx feed

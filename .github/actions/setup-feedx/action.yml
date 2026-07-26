@@ -1,0 +1,16 @@
+name: Setup FeedX
+description: Install uv, provision Python, and sync dependencies from uv.lock
+
+runs:
+  using: composite
+  steps:
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
+
+    - name: Sync dependencies
+      shell: bash
+      # --frozen installs exactly what uv.lock pins; python is provisioned from
+      # .python-version / requires-python automatically.
+      run: uv sync --frozen
