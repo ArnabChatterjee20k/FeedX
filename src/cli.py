@@ -24,6 +24,41 @@ def init():
     init_database()
 
 
+@cli.command("sync-secrets")
+def sync_secrets_cmd(
+    repo: str = typer.Option(
+        None, help="runner repo owner/name; defaults to GITHUB_SYNC_REPO"
+    ),
+    token: str = typer.Option(
+        None, help="admin PAT for the runner repo; defaults to GITHUB_SYNC_TOKEN"
+    ),
+    env_file: str = typer.Argument(".env", help="local env file to read values from"),
+    manifest: str = typer.Option(
+        ".env.example", help="manifest tagging each name [secret]/[var]"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="show the diff without writing anything"
+    ),
+):
+    """Push local .env values to a repo's GitHub Actions secrets/variables."""
+    from .feed.github import sync_secrets
+
+    try:
+        repo, rows = sync_secrets(repo, token, env_file, manifest, dry_run)
+    except Exception as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"{'DRY RUN — ' if dry_run else ''}target repo: {repo}\n")
+    table = [("NAME", "KIND", "ON REPO", "ACTION")] + [
+        (r["name"], r["kind"], "yes" if r["present"] else "no", r["action"])
+        for r in rows
+    ]
+    widths = [max(len(row[i]) for row in table) for i in range(4)]
+    for row in table:
+        typer.echo("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)))
+
+
 @cli.command("feed")
 def get_feed():
     pool = get_feed_worker_pool()

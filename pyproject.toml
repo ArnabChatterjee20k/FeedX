@@ -11,6 +11,7 @@ dependencies = [
     "fastapi[standard]>=0.139.0",
     "pydantic-ai-slim[openai]>=2.13.0",
     "pydantic-ai[openai]>=2.13.0",
+    "pynacl>=1.6.2",
     "python-dotenv>=1.2.2",
     "scout",
 ]

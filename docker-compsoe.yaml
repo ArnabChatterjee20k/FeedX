@@ -12,6 +12,15 @@ services:
       - "11434:11434"
     volumes:
       - models:/root/.ollama
+    healthcheck:
+      # healthy only once the first MODELS entry is downloaded, so `up --wait`
+      # doesn't return while the model is still pulling. $$ -> literal $ so the
+      # container's shell expands MODELS.
+      test: ["CMD-SHELL", "ollama list | grep -qi \"$${MODELS%%,*}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
 
 volumes:
   models:
