@@ -1,9 +1,14 @@
 from pydantic import BaseModel
 from datetime import datetime
+from typing import Literal
+
+type URLKind = Literal["source", "url"]
 
 
 class SourceRequest(BaseModel):
     url: str
+    kind: URLKind | None = "source"
+    source: str | None = "api"
 
 
 class SourceResponse(BaseModel):
@@ -23,7 +28,9 @@ class SourceListRequest(BaseModel):
     hostname: str | None = None
     after_id: str | None = None
     before_id: str | None = None
+    source: list[str] | None = None
     limit: int = 20
+    kind: URLKind | None = "source"
 
 
 class SourceListReponse(BaseModel):

@@ -44,12 +44,18 @@ async def create_source(body: SourceRequest):
         raise HTTPException(
             status_code=400, detail="Invalid URL: could not extract hostname"
         )
-
+    if body.kind == "source" and body.url != body.source:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid source and kind: for url kind 'source' soure field must be equal to the url itself",
+        )
     url_data = URL(
         url=body.url,
         hostname=hostname_str,
         crawl_state=CrawlState.QUEUED.value,
         next_crawl_at=datetime.now(timezone.utc).isoformat(),
+        kind=body.kind,
+        source=body.source,
     ).model_dump()
     url_data["crawl_state"] = str(CrawlState.QUEUED.value)
     # adding next_crawl_at twice to satisfy the url model as its required and also here for proper serialization
@@ -117,7 +123,10 @@ async def list_sources(filters: Annotated[SourceListRequest, RequestQuery()]):
     elif filters.after_id:
         queries.append(Query.cursor_after(filters.after_id))
 
-    for field in ["id", "url", "hostname"]:
+    if filters.source:
+        queries.append(Query.equal("source", filters.source))
+
+    for field in ["id", "url", "hostname", "kind"]:
         value = getattr(filters, field)
         if value is not None:
             queries.append(Query.equal(field, [value]))
