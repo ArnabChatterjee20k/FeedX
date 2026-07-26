@@ -41,4 +41,4 @@ jobs:
       - name: Install Playwright browser
         run: uv run playwright install --with-deps chromium
       - name: Run crawl pipeline
-        run: uv run feedx crawler crawl --workers "${{ github.event.inputs.workers || '1' }}"
+        run: uv run python -m src.cli crawler crawl --workers "${{ github.event.inputs.workers || '1' }}"

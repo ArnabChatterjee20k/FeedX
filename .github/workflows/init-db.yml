@@ -18,4 +18,4 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-feedx
       - name: Initialise database schema
-        run: uv run feedx init
+        run: uv run python -m src.cli init

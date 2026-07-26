@@ -42,7 +42,7 @@ jobs:
         # finished, so the endpoint is ready before the content run.
         run: docker compose -f docker-compsoe.yaml up -d --wait
       - name: Run content pipeline
-        run: uv run feedx content run --workers "${{ github.event.inputs.workers || '1' }}"
+        run: uv run python -m src.cli content run --workers "${{ github.event.inputs.workers || '1' }}"
       - name: Stop Ollama
         if: always()
         run: docker compose -f docker-compsoe.yaml down
