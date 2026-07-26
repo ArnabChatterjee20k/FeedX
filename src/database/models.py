@@ -73,6 +73,11 @@ class URL(BaseModel):
 
     depth: int = DBField(default=0)
 
+    kind: str = DBField(required=True, indexed=True)
+
+    # source of the url. For source kind source is the source of the source.
+    source: str = DBField(required=True, indexed=True)
+
     # will not be None and will be set to a date due to db optimisations
     next_crawl_at: datetime = DBField(indexed=True)
 
