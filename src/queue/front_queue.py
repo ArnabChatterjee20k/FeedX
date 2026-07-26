@@ -49,30 +49,53 @@ class FrontQueue(Queue):
         self._logger.info(f"Popped url {item.id}", tag="POP")
         return item
 
-    def _get_all_urls(self) -> list[URL]:
+    def _get_all_urls(self) -> list[URLRow]:
         database = get_database()
         limit = os.environ.get("QUEUE_INIT_LIMIT", 1000)
-        # not using (next_crawl_at <= now() or next_crawl_at is null) as the query as mysql(appwrite) will start doing full table scan for this
-        queries = [
-            Query.less_than_equal(
-                "next_crawl_at", datetime.now(timezone.utc).isoformat()
-            ),
-            Query.or_queries(
-                [
-                    Query.equal("crawl_state", str(CrawlState.QUEUED.value)),
-                    Query.equal("crawl_state", str(CrawlState.RETRY.value)),
-                ]
-            ),
-            Query.limit(limit),
-        ]
-        rows = database.list_rows(
+        now = datetime.now(timezone.utc).isoformat()
+
+        # sources are pulled every run regardless of crawl_state so they recur
+        # (queues are rebuilt each run), and placed at the FRONT so each host
+        # discovers new urls before crawling its content pages. the claim is made
+        # source-aware in the worker so a SUCCESS/RETRY source can still be taken.
+        source_rows = database.list_rows(
             database_id=APPWRITE_DATABASE_ID,
             table_id=URL.__name__,
-            queries=queries,
+            queries=[
+                Query.equal("kind", ["source"]),
+                Query.less_than_equal("next_crawl_at", now),
+                Query.limit(limit),
+            ],
             total="false",
             model_type=URL,
         )
-        return [
+
+        # not using (next_crawl_at <= now() or next_crawl_at is null) as the query as mysql(appwrite) will start doing full table scan for this
+        url_rows = database.list_rows(
+            database_id=APPWRITE_DATABASE_ID,
+            table_id=URL.__name__,
+            queries=[
+                # using not equal to source instead of equal to url for easy testing with legacy
+                Query.not_equal("kind", "source"),
+                Query.less_than_equal("next_crawl_at", now),
+                Query.or_queries(
+                    [
+                        Query.equal("crawl_state", str(CrawlState.QUEUED.value)),
+                        Query.equal("crawl_state", str(CrawlState.RETRY.value)),
+                    ]
+                ),
+                Query.limit(limit),
+            ],
+            total="false",
+            model_type=URL,
+        )
+
+        sources = [
             URLRow(**row.data.model_dump(), id=row.id, sequence=row.sequence)
-            for row in rows.rows
+            for row in source_rows.rows
         ]
+        others = [
+            URLRow(**row.data.model_dump(), id=row.id, sequence=row.sequence)
+            for row in url_rows.rows
+        ]
+        return sources + others
