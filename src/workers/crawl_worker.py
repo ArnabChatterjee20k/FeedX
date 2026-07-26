@@ -9,9 +9,12 @@ from appwrite.query import Query
 from ..database.models import CrawlState, URL, Content, ContentPipelineState, Hostname
 import os, random, re
 from datetime import datetime, timezone, timedelta
+from urllib.parse import urljoin, urlsplit, urldefrag
 from appwrite.operator import Operator
+from appwrite.id import ID
 from domdistill.chunker import HTMLIntentChunker
 from domdistill.simhash import get_similarity
+from scout.html_parser import HTMLParser
 import inspect
 
 crawl_id = os.environ.get("CRAWL_ID")
@@ -75,7 +78,7 @@ class CrawlWorker(Worker):
             taken_by_other = False
             err = None
             while not claimed and retry < 5:
-                claimed, err = await asyncio.to_thread(self._claim, url.id)
+                claimed, err = await asyncio.to_thread(self._claim, url.id, url.kind)
                 if claimed:
                     break
                 if err is None:
@@ -106,6 +109,10 @@ class CrawlWorker(Worker):
                 await self.error()
                 continue
             try:
+                # a source page just emits new urls to crawl
+                if url.kind == "source":
+                    await self._discover_source(url)
+                    continue
                 # depth of a single graph of pages visiting
                 depth = 5
                 # total pages limit
@@ -140,11 +147,12 @@ class CrawlWorker(Worker):
                         )
                     ),
                 )
-                documents = await self._scout.crawl(url.url, config=config)
-                # updating the global scheduled item for next scheduling
+                # bump the host cooldown up front so it applies on EVERY exit path
+                # (success or error) — the crawl hits the host either way.
                 FIVE_MINUTES = 5 * 60
                 OFFSET_SECONDS = 30
                 self._scheduled_item.add_seconds(FIVE_MINUTES + OFFSET_SECONDS)
+                documents = await self._scout.crawl(url.url, config=config)
                 documents: list[Document] = list(
                     filter(lambda document: isinstance(document, Document), documents)
                 )
@@ -389,20 +397,26 @@ class CrawlWorker(Worker):
         except Exception as e:
             return False, e
 
-    def _claim(self, url_id) -> tuple[bool, None | Exception]:
+    def _claim(self, url_id, kind: str | None = None) -> tuple[bool, None | Exception]:
         try:
             database = get_database()
+            if kind == "source":
+                # a source recurs, so by now it may be SUCCESS/RETRY from a prior
+                # run. claim from any state EXCEPT an in-flight FETCHING, which
+                # keeps the claim atomic across parallel runners.
+                state_query = Query.not_equal(
+                    "crawl_state", str(CrawlState.FETCHING.value)
+                )
+            else:
+                state_query = Query.equal(
+                    "crawl_state",
+                    [str(CrawlState.QUEUED.value), str(CrawlState.RETRY.value)],
+                )
             result = database.update_rows(
                 APPWRITE_DATABASE_ID,
                 URL.__name__,
                 data={"crawl_state": str(CrawlState.FETCHING.value)},
-                queries=[
-                    Query.equal("$id", [url_id]),
-                    Query.equal(
-                        "crawl_state",
-                        [str(CrawlState.QUEUED.value), str(CrawlState.RETRY.value)],
-                    ),
-                ],
+                queries=[Query.equal("$id", [url_id]), state_query],
             )
             return len(result.rows) == 1, None
         except Exception as e:
@@ -517,3 +531,110 @@ class CrawlWorker(Worker):
             return True, None
         except Exception as e:
             return False, e
+
+    async def _discover_source(self, url):
+        try:
+            FIVE_MINUTES = 5 * 60
+            OFFSET_SECONDS = 30
+            self._scheduled_item.add_seconds(FIVE_MINUTES + OFFSET_SECONDS)
+            document = await self._scout.scrape(url.url)
+            if not isinstance(document, Document):
+                self._logger.error(
+                    f"Source scrape returned no document for {url.url}",
+                    tag="DISCOVER_SOURCE",
+                )
+                await self.error()
+                return
+            links = self._extract_links([document], url.hostname, url.url)
+            self._logger.info(
+                f"Discovered {len(links)} links from source {url.url}",
+                tag="DISCOVER_SOURCE",
+            )
+            created, err = await asyncio.to_thread(
+                self._create_source_urls, links, url.url
+            )
+            if err:
+                self._logger.error(
+                    f"Failed to create urls from source {url.id}",
+                    tag="CREATE_SOURCE_URLS",
+                    error=err,
+                )
+                await self.error()
+                return
+            self._logger.info(
+                f"Created {created} new urls from source {url.url}",
+                tag="CREATE_SOURCE_URLS",
+            )
+            await self.complete()
+        except Exception as err:
+            self._logger.error(
+                f"Failed to discover source {url.id} {url.url}",
+                tag="DISCOVER_SOURCE",
+                error=err,
+            )
+            await self.error()
+
+    def _extract_links(self, documents, hostname: str, source_url: str) -> set[str]:
+        links: set[str] = set()
+        for document in documents:
+            try:
+                hrefs = HTMLParser(document.html).from_tag("a", "href")
+            except Exception:
+                continue
+            for href in hrefs:
+                if not href:
+                    continue
+                absolute, _ = urldefrag(urljoin(document.url, href))
+                parts = urlsplit(absolute)
+                if parts.scheme not in ("http", "https") or not parts.hostname:
+                    continue
+                host = parts.hostname
+                # keep only same-host links (tolerating a www. prefix either way)
+                if (
+                    host not in (hostname, f"www.{hostname}")
+                    and hostname != f"www.{host}"
+                ):
+                    continue
+                if absolute.rstrip("/") == source_url.rstrip("/"):
+                    continue
+                links.add(absolute)
+        return links
+
+    def _create_source_urls(
+        self, urls: set[str], source: str
+    ) -> tuple[int, None | Exception]:
+        # insert one at a time so an existing url (unique index) is skipped
+        # without failing the whole batch (a re-run mostly re-sees old links).
+        try:
+            database = get_database()
+            now = datetime.now(timezone.utc).isoformat()
+            created = 0
+            for u in urls:
+                host = urlsplit(u).hostname
+                if not host:
+                    continue
+                row = URL(
+                    url=u,
+                    hostname=host,
+                    crawl_state=CrawlState.QUEUED.value,
+                    next_crawl_at=now,
+                    kind="url",
+                    source=source,
+                ).model_dump()
+                row["crawl_state"] = str(CrawlState.QUEUED.value)
+                row["next_crawl_at"] = now
+                row = {k: v for k, v in row.items() if v is not None}
+                try:
+                    database.create_row(
+                        APPWRITE_DATABASE_ID,
+                        URL.__name__,
+                        row_id=ID.unique(),
+                        data=row,
+                    )
+                    created += 1
+                except Exception:
+                    # unique index -> url already known, skip
+                    continue
+            return created, None
+        except Exception as e:
+            return 0, e
