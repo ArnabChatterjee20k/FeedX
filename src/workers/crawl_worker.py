@@ -6,12 +6,13 @@ from scout.core import CrawlConfig, ScrollingRule, VirtualScrollConfig, Document
 from .worker import Worker
 from ..database import get_database, APPWRITE_DATABASE_ID
 from appwrite.query import Query
+from appwrite.id import ID
 from ..database.models import CrawlState, URL, Content, ContentPipelineState, Hostname
+from ..queue.models import URLRow
 import os, random, re
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urljoin, urlsplit, urldefrag
 from appwrite.operator import Operator
-from appwrite.id import ID
 from domdistill.chunker import HTMLIntentChunker
 from domdistill.simhash import get_similarity
 from scout.html_parser import HTMLParser
@@ -550,7 +551,7 @@ class CrawlWorker(Worker):
                 f"Discovered {len(links)} links from source {url.url}",
                 tag="DISCOVER_SOURCE",
             )
-            created, err = await asyncio.to_thread(
+            url_rows, err = await asyncio.to_thread(
                 self._create_source_urls, links, url.url
             )
             if err:
@@ -562,9 +563,15 @@ class CrawlWorker(Worker):
                 await self.error()
                 return
             self._logger.info(
-                f"Created {created} new urls from source {url.url}",
+                f"Created {len(url_rows)} new urls from source {url.url}",
                 tag="CREATE_SOURCE_URLS",
             )
+
+            # only back queue as scheduled queue is for the hostname backpressure
+            # as the source is already present in the backqueue the hostname of the new urls would be present in the scheduler queue as well
+            # so only push to the back queue
+            for row in url_rows:
+                self._back_queue.push(row.hostname, row)
             await self.complete()
         except Exception as err:
             self._logger.error(
@@ -602,13 +609,13 @@ class CrawlWorker(Worker):
 
     def _create_source_urls(
         self, urls: set[str], source: str
-    ) -> tuple[int, None | Exception]:
+    ) -> tuple[list[URLRow], None | Exception]:
         try:
             database = get_database()
             now = datetime.now(timezone.utc).isoformat()
             url_list = list(urls)
             if not url_list:
-                return 0, None
+                return [], None
             batch_size = 30
             batches = [
                 url_list[i : i + batch_size]
@@ -631,6 +638,8 @@ class CrawlWorker(Worker):
                 )
 
             urls_to_add = []
+            # for further processing
+            url_rows_to_return = []
             for u in url_list:
                 if u in seen:
                     continue
@@ -648,12 +657,14 @@ class CrawlWorker(Worker):
                 row["crawl_state"] = str(CrawlState.QUEUED.value)
                 row["next_crawl_at"] = now
                 row = {k: v for k, v in row.items() if v is not None}
+                row_id = ID.unique()
+                url_rows_to_return.append(URLRow(**row, id=row_id, sequence=0))
+                row["$id"] = row_id
                 urls_to_add.append(row)
-
             if not urls_to_add:
-                return 0, None
+                return [], None
             # if error then the source is skipped for this run and wll be used in the next runs
             database.create_rows(APPWRITE_DATABASE_ID, URL.__name__, rows=urls_to_add)
-            return len(urls_to_add), None
+            return url_rows_to_return, None
         except Exception as e:
-            return 0, e
+            return [], e
