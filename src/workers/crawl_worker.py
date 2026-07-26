@@ -603,13 +603,37 @@ class CrawlWorker(Worker):
     def _create_source_urls(
         self, urls: set[str], source: str
     ) -> tuple[int, None | Exception]:
-        # insert one at a time so an existing url (unique index) is skipped
-        # without failing the whole batch (a re-run mostly re-sees old links).
         try:
             database = get_database()
             now = datetime.now(timezone.utc).isoformat()
-            created = 0
-            for u in urls:
+            url_list = list(urls)
+            if not url_list:
+                return 0, None
+            batch_size = 30
+            batches = [
+                url_list[i : i + batch_size]
+                for i in range(0, len(url_list), batch_size)
+            ]
+            seen: set[str] = set()
+            for batch in batches:
+                present_urls = database.list_rows(
+                    APPWRITE_DATABASE_ID,
+                    URL.__name__,
+                    queries=[Query.equal("url", batch), Query.select(["url"])],
+                )
+                for row in present_urls.rows:
+                    seen.add(row.data.get("url"))
+
+            if seen:
+                self._logger.info(
+                    f"Skipping {len(seen)} duplicate urls already in db: {sorted(seen)}",
+                    tag="CREATE_SOURCE_URLS",
+                )
+
+            urls_to_add = []
+            for u in url_list:
+                if u in seen:
+                    continue
                 host = urlsplit(u).hostname
                 if not host:
                     continue
@@ -624,17 +648,12 @@ class CrawlWorker(Worker):
                 row["crawl_state"] = str(CrawlState.QUEUED.value)
                 row["next_crawl_at"] = now
                 row = {k: v for k, v in row.items() if v is not None}
-                try:
-                    database.create_row(
-                        APPWRITE_DATABASE_ID,
-                        URL.__name__,
-                        row_id=ID.unique(),
-                        data=row,
-                    )
-                    created += 1
-                except Exception:
-                    # unique index -> url already known, skip
-                    continue
-            return created, None
+                urls_to_add.append(row)
+
+            if not urls_to_add:
+                return 0, None
+            # if error then the source is skipped for this run and wll be used in the next runs
+            database.create_rows(APPWRITE_DATABASE_ID, URL.__name__, rows=urls_to_add)
+            return len(urls_to_add), None
         except Exception as e:
             return 0, e
