@@ -382,6 +382,13 @@ class CrawlWorker(Worker):
             return False, e
 
     def _lease_hostname(self, hostname_id) -> tuple[bool, None | Exception]:
+        # atomically "lease" a host: conditionally push its next_allowed_at into
+        # the future (now + HOSTNAME_LEASE_SECONDS) ONLY if it's currently due
+        # (next_allowed_at <= now). the update is the lock — exactly one
+        # worker/process can flip a due host, so only that one gets to crawl it;
+        # everyone else sees 0 rows updated and backs off. the future timestamp
+        # also means that if this worker crashes mid-crawl, the host stays leased
+        # (unavailable) until it expires, instead of being grabbed again at once.
         try:
             database = get_database()
             now = datetime.now(timezone.utc)
