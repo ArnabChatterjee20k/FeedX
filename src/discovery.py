@@ -154,6 +154,195 @@ IGNORE_EXTENSIONS = {
     ".woff2",
 }
 
+# Generic / boilerplate *content tags* that carry no topical signal. A small
+# summariser latches onto page furniture — nav, auth, commerce, legal, social,
+# and format words — instead of the actual subject, so "python, http, socket"
+# comes back padded with "bookshop, barnes and noble, newsletter, privacy". This
+# is the tag-side counterpart to IGNORE_SEGMENTS: matched case-insensitively
+# against the whole (already-normalised) tag, exact match only, so a real topic
+# that merely contains one of these words is safe. Grow it as junk shows up in
+# the feed — that's the intended knob.
+IGNORE_TAGS = {
+    # site chrome / navigation / meta
+    "home",
+    "homepage",
+    "home page",
+    "website",
+    "web site",
+    "site",
+    "web page",
+    "webpage",
+    "page",
+    "pages",
+    "landing page",
+    "menu",
+    "navigation",
+    "sidebar",
+    "footer",
+    "header",
+    "breadcrumb",
+    "table of contents",
+    "contents",
+    "index",
+    "read more",
+    "learn more",
+    "click here",
+    "see more",
+    "view all",
+    "show more",
+    "search",
+    "search results",
+    # account / auth / social actions
+    "login",
+    "log in",
+    "sign in",
+    "signin",
+    "sign up",
+    "signup",
+    "register",
+    "registration",
+    "logout",
+    "account",
+    "my account",
+    "profile",
+    "dashboard",
+    "settings",
+    "password",
+    "subscribe",
+    "subscription",
+    "newsletter",
+    "mailing list",
+    "follow",
+    "follow us",
+    "followers",
+    "following",
+    "membership",
+    "member",
+    "members",
+    "share",
+    "share this",
+    "social media",
+    "like",
+    "comment",
+    "comments",
+    "reply",
+    # legal / policy / corporate boilerplate
+    "about",
+    "about us",
+    "about me",
+    "contact",
+    "contact us",
+    "get in touch",
+    "faq",
+    "faqs",
+    "help",
+    "support",
+    "help center",
+    "privacy",
+    "privacy policy",
+    "terms",
+    "terms of service",
+    "terms of use",
+    "terms and conditions",
+    "cookie",
+    "cookies",
+    "cookie policy",
+    "gdpr",
+    "disclaimer",
+    "legal",
+    "license",
+    "copyright",
+    "dmca",
+    "careers",
+    "career",
+    "jobs",
+    "hiring",
+    "press",
+    "press release",
+    "media kit",
+    "advertise",
+    "advertising",
+    "sponsor",
+    "sponsorship",
+    "partners",
+    "partnership",
+    # commerce / retail / purchase
+    "store",
+    "shop",
+    "shopping",
+    "cart",
+    "checkout",
+    "buy",
+    "buy now",
+    "order",
+    "purchase",
+    "pricing",
+    "price",
+    "deal",
+    "deals",
+    "discount",
+    "coupon",
+    "sale",
+    "ecommerce",
+    "e-commerce",
+    "marketplace",
+    "bookshop",
+    "bookstore",
+    "barnes and noble",
+    "amazon",
+    "amazon.com",
+    "ebay",
+    "walmart",
+    "etsy",
+    "google play",
+    "app store",
+    "play store",
+    "oxford university press",
+    "university press",
+    # generic format / container words (topically empty)
+    "blog",
+    "blog post",
+    "blog posts",
+    "article",
+    "articles",
+    "post",
+    "posts",
+    "news",
+    "story",
+    "stories",
+    "book",
+    "ebook",
+    "e-book",
+    "pdf",
+    "download",
+    "downloads",
+    "free download",
+    "repository",
+    "repo",
+    "github repository",
+    "project",
+    "forum",
+    "discussion",
+    "discussion forum",
+    "community",
+    "ubiquity",
+    # generic promo / listing words
+    "latest",
+    "trending",
+    "popular",
+    "featured",
+    "recommended",
+    "related",
+    "related posts",
+    "related articles",
+    "recent posts",
+    "you may also like",
+}
+
+# A tag longer than this is almost never a topic — it's a sentence fragment or a
+# section heading the model dumped in (e.g. "part 4: modern browsers ...").
+MAX_TAG_LEN = 40
+
 # Bare handle/profile pages like "/@Moesif" (but NOT "/@Moesif/some-post-abc123").
 _BARE_PROFILE = re.compile(r"^/@[^/]+$")
 
@@ -193,6 +382,30 @@ def is_ignored(url: str) -> bool:
         return True
 
     return False
+
+
+def is_ignored_tag(tag: str) -> bool:
+    # generic/boilerplate tag (nav, auth, commerce, legal, format words) or an
+    # over-long sentence fragment — either way, no topical signal.
+    t = tag.strip().lower()
+    if not t or len(t) > MAX_TAG_LEN:
+        return True
+    return t in IGNORE_TAGS
+
+
+def filter_tags(tags: list[str]) -> list[str]:
+    # drop junk tags -> dedup, preserving first-seen order (case-insensitive).
+    # The tag-domain twin of filter_links; used on free-form summariser output
+    # where there is no controlled vocabulary to fall back on.
+    seen: set[str] = set()
+    kept: list[str] = []
+    for tag in tags:
+        key = tag.strip().lower()
+        if not key or key in seen or is_ignored_tag(tag):
+            continue
+        seen.add(key)
+        kept.append(tag)
+    return kept
 
 
 def filter_links(urls: list[str], base_host: str | None = None) -> list[str]:

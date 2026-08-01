@@ -9,6 +9,8 @@ from pydantic_ai.output import NativeOutput
 from pydantic_ai.providers.ollama import OllamaProvider
 from pydantic_ai.settings import ModelSettings
 
+from ..discovery import filter_tags
+
 # Small local models have a tight context window, so cap how much text we feed
 # in. The chunker already trims boilerplate; this is just a safety bound.
 MAX_INPUT_CHARS = 8_000
@@ -309,7 +311,13 @@ class ContentAgent:
 
         tags = normalize_tags(raw_tags)
         if allowed_set:
+            # allowlist mode: the vocabulary is user-curated, so trust it as-is.
             tags = [t for t in tags if t in allowed_set]
+        else:
+            # free-form mode: no vocabulary to lean on, so drop the generic /
+            # boilerplate tags the small model tends to emit (nav, commerce,
+            # legal, format words) via the shared discovery blocklist.
+            tags = filter_tags(tags)
         return ContentAnalysis(summary=output.summary, tags=tags[:MAX_TAGS])  # type: ignore[attr-defined]
 
     def analyze(
