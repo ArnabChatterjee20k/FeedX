@@ -19,9 +19,19 @@ from typing import TypeVar, ParamSpec, Callable, cast, Annotated
 from collections.abc import Coroutine
 from appwrite.query import Query
 from appwrite.id import ID
-from fastapi import Query as RequestQuery
+from .auth import check_user
+from fastapi import Query as RequestQuery, Depends, HTTPException, Cookie
 
-router = APIRouter()
+
+async def is_valid_user(__feed_x_token: Annotated[str, Cookie()]):
+    user = check_user(__feed_x_token)
+    if not user:
+        raise HTTPException(401, "invalid user")
+    return user
+
+
+router = APIRouter(dependencies=[Depends(is_valid_user)])
+
 database = get_database()
 DB_ID: str = cast(str, APPWRITE_DATABASE_ID)
 T = TypeVar("T")

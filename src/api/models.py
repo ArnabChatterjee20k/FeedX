@@ -5,6 +5,10 @@ from typing import Literal
 type URLKind = Literal["source", "url"]
 
 
+class LoginRequest(BaseModel):
+    password: str
+
+
 class SourceRequest(BaseModel):
     url: str
     kind: URLKind | None = "source"

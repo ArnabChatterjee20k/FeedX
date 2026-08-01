@@ -1,7 +1,11 @@
 from fastapi import FastAPI
+from fastapi.responses import Response
+from fastapi.exceptions import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from scout.logger import get_logger
+from .models import LoginRequest
+from .auth import create_user, check_user
 
 logger = get_logger("API")
 
@@ -31,4 +35,13 @@ def create_api():
         allow_headers=["*"],
     )
     app.include_router(router)
+
+    @app.post("/login")
+    def login_user(body: LoginRequest, response: Response):
+        user = create_user(body.password)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Wrong password")
+        response.set_cookie(key="__feed_x_token", value=user)
+        return {"status": "success"}
+
     return app
