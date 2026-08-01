@@ -65,6 +65,36 @@ def get_feed():
     pool.start()
 
 
+@cli.command("serve")
+def serve(
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    prod: bool = typer.Option(
+        False, "--prod", help="use `fastapi run` (no reload) instead of `fastapi dev`"
+    ),
+):
+    """Run the API + admin page via the FastAPI CLI (http://<host>:<port>/admin)."""
+    import os
+    import subprocess
+
+    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+    mode = "run" if prod else "dev"
+    subprocess.run(
+        [
+            "fastapi",
+            mode,
+            "main.py",
+            "--app",
+            "api",
+            "--host",
+            host,
+            "--port",
+            str(port),
+        ],
+        env=env,
+    )
+
+
 async def _run_pool(pool):
     try:
         await pool.start()

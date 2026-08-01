@@ -19,12 +19,14 @@ from typing import TypeVar, ParamSpec, Callable, cast, Annotated
 from collections.abc import Coroutine
 from appwrite.query import Query
 from appwrite.id import ID
-from .auth import check_user
+from .auth import check_user, AUTH_COOKIE
 from fastapi import Query as RequestQuery, Depends, HTTPException, Cookie
 
 
-async def is_valid_user(__feed_x_token: Annotated[str, Cookie()]):
-    user = check_user(__feed_x_token)
+async def is_valid_user(
+    token: Annotated[str | None, Cookie(alias=AUTH_COOKIE)] = None,
+):
+    user = check_user(token)
     if not user:
         raise HTTPException(401, "invalid user")
     return user

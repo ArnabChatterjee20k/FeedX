@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.responses import Response
 from fastapi.exceptions import HTTPException
@@ -5,9 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from scout.logger import get_logger
 from .models import LoginRequest
-from .auth import create_user, check_user
+from .auth import create_user, AUTH_COOKIE
 
 logger = get_logger("API")
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 # @asynccontextmanager
 # async def lifespan(app):
@@ -41,7 +45,20 @@ def create_api():
         user = create_user(body.password)
         if user is None:
             raise HTTPException(status_code=401, detail="Wrong password")
-        response.set_cookie(key="__feed_x_token", value=user)
+        response.set_cookie(
+            key=AUTH_COOKIE,
+            value=user,
+            httponly=True,
+            samesite="lax",
+            max_age=30 * 24 * 60 * 60,
+        )
         return {"status": "success"}
+
+    @app.post("/logout")
+    def logout_user(response: Response):
+        response.delete_cookie(key=AUTH_COOKIE)
+        return {"status": "success"}
+
+    app.frontend("/", directory=str(STATIC_DIR), fallback="index.html")
 
     return app

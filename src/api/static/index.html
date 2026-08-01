@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FeedX · Admin</title>
+    <style>
+      :root {
+        --bg: #0f1115;
+        --panel: #171a21;
+        --panel2: #1e222b;
+        --border: #2a2f3a;
+        --text: #e6e8ec;
+        --muted: #9aa3b2;
+        --accent: #5b8cff;
+        --accent-fg: #fff;
+        --danger: #ff6b6b;
+        --ok: #38d39f;
+        --warn: #ffcf5c;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      a { color: var(--accent); }
+      .wrap { max-width: 1080px; margin: 0 auto; padding: 24px 20px 64px; }
+      header {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 12px; margin-bottom: 24px;
+      }
+      header h1 { font-size: 18px; margin: 0; letter-spacing: 0.2px; }
+      header .sub { color: var(--muted); font-size: 12px; }
+      .card {
+        background: var(--panel); border: 1px solid var(--border);
+        border-radius: 12px; padding: 18px;
+      }
+      .card + .card { margin-top: 18px; }
+      h2 { font-size: 14px; margin: 0 0 14px; color: var(--muted); font-weight: 600;
+           text-transform: uppercase; letter-spacing: 0.6px; }
+      label { display: block; font-size: 12px; color: var(--muted); margin: 0 0 5px; }
+      input, select {
+        width: 100%; padding: 9px 11px; background: var(--panel2);
+        border: 1px solid var(--border); border-radius: 8px; color: var(--text);
+        font: inherit; outline: none;
+      }
+      input:focus, select:focus { border-color: var(--accent); }
+      button {
+        padding: 9px 14px; border-radius: 8px; border: 1px solid var(--border);
+        background: var(--panel2); color: var(--text); font: inherit;
+        cursor: pointer; white-space: nowrap;
+      }
+      button:hover { border-color: var(--accent); }
+      button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+      button.ghost { background: transparent; }
+      button.link { border: none; background: none; color: var(--accent); padding: 4px 6px; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+      .row > div { flex: 1 1 200px; }
+      .row > .grow2 { flex: 2 1 320px; }
+      .actions { display: flex; gap: 8px; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border);
+               font-size: 13px; vertical-align: top; }
+      th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+      td.url { word-break: break-all; max-width: 460px; }
+      td.url .host { color: var(--muted); font-size: 11px; }
+      .tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+      .tabs button.active { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+      .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px;
+              border: 1px solid var(--border); }
+      .s-queued { color: var(--warn); border-color: #5a4d1f; }
+      .s-fetching { color: var(--accent); border-color: #2a3c66; }
+      .s-success { color: var(--ok); border-color: #1f5a45; }
+      .s-retry { color: var(--warn); border-color: #5a4d1f; }
+      .s-failed { color: var(--danger); border-color: #5a2626; }
+      .s-blocked { color: var(--danger); border-color: #5a2626; }
+      .muted { color: var(--muted); }
+      .toast {
+        position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+        background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+        padding: 10px 16px; border-radius: 10px; font-size: 13px; opacity: 0;
+        transition: opacity 0.2s; pointer-events: none; max-width: 90vw;
+      }
+      .toast.show { opacity: 1; }
+      .toast.err { border-color: var(--danger); color: var(--danger); }
+      .empty { color: var(--muted); padding: 24px 4px; text-align: center; }
+      .q-meta { font-size: 12px; margin: 0 0 10px; }
+      .jsonbox {
+        margin: 0; background: var(--panel2); border: 1px solid var(--border);
+        border-radius: 8px; padding: 12px 14px; max-height: 460px; overflow: auto;
+        font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        white-space: pre; color: var(--text);
+      }
+      /* login */
+      .login { max-width: 360px; margin: 12vh auto 0; }
+      .login h1 { font-size: 20px; margin: 0 0 4px; }
+      .login p { color: var(--muted); margin: 0 0 20px; font-size: 13px; }
+      .hide { display: none !important; }
+      #table-wrap { overflow-x: auto; }
+
+      /* --- phones: stack the form, turn the table into labeled cards --- */
+      @media (max-width: 640px) {
+        .wrap { padding: 16px 14px 56px; }
+        header { flex-wrap: wrap; }
+        .card { padding: 14px; }
+        .row { align-items: stretch; }
+        .row > div,
+        .row > .grow2 { flex-basis: 100% !important; }
+        #create-form button { width: 100%; }
+        .tabs { flex-wrap: wrap; }
+        #refresh { margin-left: 0 !important; }
+
+        table, tbody, tr, td { display: block; width: 100%; }
+        thead { display: none; }
+        tr {
+          background: var(--panel2); border: 1px solid var(--border);
+          border-radius: 10px; padding: 4px 12px; margin-bottom: 10px;
+        }
+        td {
+          border-bottom: none; padding: 8px 0;
+          display: flex; gap: 12px; align-items: baseline; justify-content: space-between;
+        }
+        td::before {
+          content: attr(data-label); color: var(--muted); font-size: 11px;
+          text-transform: uppercase; letter-spacing: 0.5px; flex: 0 0 auto;
+        }
+        td.url {
+          max-width: 100%; flex-direction: column;
+          align-items: flex-start; gap: 3px;
+        }
+        td.actions { justify-content: flex-start; }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- LOGIN -->
+    <div id="login-view" class="wrap hide">
+      <div class="login card">
+        <h1>FeedX</h1>
+        <p>Admin access</p>
+        <form id="login-form">
+          <label for="password">Password</label>
+          <input id="password" type="password" autocomplete="current-password" required />
+          <div style="height: 14px"></div>
+          <button class="primary" type="submit" style="width: 100%">Sign in</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- DASHBOARD -->
+    <div id="app-view" class="wrap hide">
+      <header>
+        <div>
+          <h1>FeedX Admin</h1>
+          <div class="sub">crawl sources &amp; discovered urls</div>
+        </div>
+        <button id="logout" class="ghost">Log out</button>
+      </header>
+
+      <div class="card">
+        <h2>Add source</h2>
+        <form id="create-form">
+          <div class="row">
+            <div class="grow2">
+              <label for="c-url">URL</label>
+              <input id="c-url" type="url" placeholder="https://example.com/blog" required />
+            </div>
+            <div>
+              <label for="c-kind">Kind</label>
+              <select id="c-kind">
+                <option value="source">source (discover links)</option>
+                <option value="url">url (crawl content)</option>
+              </select>
+            </div>
+            <div id="c-source-wrap" class="hide">
+              <label for="c-source">Source</label>
+              <input id="c-source" type="text" value="api" />
+            </div>
+            <div style="flex: 0 0 auto">
+              <button class="primary" type="submit">Add</button>
+            </div>
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="tabs">
+          <button data-kind="source" class="active">Sources</button>
+          <button data-kind="url">URLs</button>
+          <button id="refresh" class="ghost" style="margin-left: auto">Refresh</button>
+        </div>
+        <div id="table-wrap"></div>
+      </div>
+
+      <div class="card">
+        <div class="tabs">
+          <button data-queue="front-queue" class="q-tab active">Front queue</button>
+          <button data-queue="back-queue" class="q-tab">Back queue</button>
+          <button data-queue="scheduler-queue" class="q-tab">Scheduler queue</button>
+          <button id="q-refresh" class="ghost" style="margin-left: auto">Load</button>
+        </div>
+        <div id="q-meta" class="q-meta muted"></div>
+        <pre id="queue-out" class="jsonbox">Pick a queue and hit Load — each rebuilds live from the DB.</pre>
+      </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <script>
+      const STATES = {
+        "1": ["QUEUED", "s-queued"],
+        "2": ["FETCHING", "s-fetching"],
+        "3": ["SUCCESS", "s-success"],
+        "4": ["RETRY", "s-retry"],
+        "5": ["FAILED", "s-failed"],
+        "6": ["BLOCKED", "s-blocked"],
+      };
+      let currentKind = "source";
+
+      const $ = (s) => document.querySelector(s);
+      function toast(msg, isErr) {
+        const t = $("#toast");
+        t.textContent = msg;
+        t.className = "toast show" + (isErr ? " err" : "");
+        setTimeout(() => (t.className = "toast"), 2600);
+      }
+
+      async function api(method, path, body) {
+        const opts = {
+          method,
+          credentials: "include",
+          headers: body ? { "Content-Type": "application/json" } : {},
+        };
+        if (body) opts.body = JSON.stringify(body);
+        const res = await fetch(path, opts);
+        let data = null;
+        try { data = await res.json(); } catch (_) {}
+        return { res, data };
+      }
+
+      function detail(data, fallback) {
+        if (!data) return fallback;
+        if (typeof data.detail === "string") return data.detail;
+        if (Array.isArray(data.detail)) return data.detail.map((d) => d.msg).join(", ");
+        return fallback;
+      }
+
+      // ---- views ----
+      function showLogin() {
+        $("#login-view").classList.remove("hide");
+        $("#app-view").classList.add("hide");
+        $("#password").focus();
+      }
+      function showApp() {
+        $("#login-view").classList.add("hide");
+        $("#app-view").classList.remove("hide");
+        loadTable();
+      }
+
+      // decide which view to show by probing an authed endpoint
+      async function boot() {
+        const { res } = await api("GET", "/sources?limit=1");
+        if (res.status === 401) showLogin();
+        else showApp();
+      }
+
+      // ---- login ----
+      $("#login-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const { res, data } = await api("POST", "/login", { password: $("#password").value });
+        if (res.ok) {
+          $("#password").value = "";
+          showApp();
+        } else {
+          toast(detail(data, "Login failed"), true);
+        }
+      });
+
+      $("#logout").addEventListener("click", async () => {
+        await api("POST", "/logout");
+        showLogin();
+      });
+
+      // ---- create ----
+      $("#c-kind").addEventListener("change", (e) => {
+        $("#c-source-wrap").classList.toggle("hide", e.target.value === "source");
+      });
+
+      $("#create-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const url = $("#c-url").value.trim();
+        const kind = $("#c-kind").value;
+        // for a 'source' the API requires source === url; for a 'url' we send the
+        // free-form source field (defaults to "api").
+        const source = kind === "source" ? url : $("#c-source").value.trim() || "api";
+        const btn = $("#create-form button");
+        btn.disabled = true;
+        const { res, data } = await api("POST", "/sources", { url, kind, source });
+        btn.disabled = false;
+        if (res.ok) {
+          $("#c-url").value = "";
+          toast("Added " + url);
+          if (currentKind === kind) loadTable();
+        } else if (res.status === 401) {
+          showLogin();
+        } else {
+          toast(detail(data, "Create failed"), true);
+        }
+      });
+
+      // ---- tabs ----
+      document.querySelectorAll(".tabs button[data-kind]").forEach((b) => {
+        b.addEventListener("click", () => {
+          currentKind = b.dataset.kind;
+          document.querySelectorAll(".tabs button[data-kind]").forEach((x) =>
+            x.classList.toggle("active", x === b)
+          );
+          loadTable();
+        });
+      });
+      $("#refresh").addEventListener("click", loadTable);
+
+      // ---- table ----
+      async function loadTable() {
+        const wrap = $("#table-wrap");
+        wrap.innerHTML = '<div class="empty">Loading…</div>';
+        const { res, data } = await api("GET", "/sources?limit=100&kind=" + currentKind);
+        if (res.status === 401) return showLogin();
+        if (!res.ok) {
+          wrap.innerHTML = '<div class="empty">' + detail(data, "Failed to load") + "</div>";
+          return;
+        }
+        const rows = (data && data.data) || [];
+        if (!rows.length) {
+          wrap.innerHTML = '<div class="empty">No ' + currentKind + "s yet.</div>";
+          return;
+        }
+        const body = rows.map(renderRow).join("");
+        wrap.innerHTML =
+          "<table><thead><tr>" +
+          "<th>URL</th><th>State</th><th>Retries</th><th></th>" +
+          "</tr></thead><tbody>" + body + "</tbody></table>";
+        wrap.querySelectorAll("button[data-retry]").forEach((b) =>
+          b.addEventListener("click", () => retry(b.dataset.retry))
+        );
+      }
+
+      function renderRow(r) {
+        const [label, cls] = STATES[String(r.crawl_state)] || [r.crawl_state, ""];
+        // data-label drives the mobile card layout (shown via td::before < 640px)
+        return (
+          "<tr>" +
+          '<td class="url" data-label="URL">' + escapeHtml(r.url) +
+            '<div class="host">' + escapeHtml(r.hostname || "") + "</div></td>" +
+          '<td data-label="State"><span class="pill ' + cls + '">' + label + "</span></td>" +
+          '<td data-label="Retries">' + (r.retry_count ?? 0) + "</td>" +
+          '<td class="actions" data-label=""><button class="link" data-retry="' + r.id + '">Retry</button></td>' +
+          "</tr>"
+        );
+      }
+
+      async function retry(id) {
+        const { res, data } = await api("PATCH", "/sources/retry/" + id);
+        if (res.status === 401) return showLogin();
+        if (res.ok) { toast("Re-queued"); loadTable(); }
+        else toast(detail(data, "Retry failed"), true);
+      }
+
+      // ---- queue inspection ----
+      let currentQueue = "front-queue";
+      document.querySelectorAll(".tabs button[data-queue]").forEach((b) => {
+        b.addEventListener("click", () => {
+          currentQueue = b.dataset.queue;
+          document.querySelectorAll(".tabs button[data-queue]").forEach((x) =>
+            x.classList.toggle("active", x === b)
+          );
+          loadQueue();
+        });
+      });
+      $("#q-refresh").addEventListener("click", loadQueue);
+
+      function queueSize(data) {
+        if (Array.isArray(data)) return data.length + " items";
+        if (data && typeof data === "object") {
+          const hosts = Object.keys(data);
+          const items = hosts.reduce(
+            (n, h) => n + (Array.isArray(data[h]) ? data[h].length : 0),
+            0
+          );
+          return hosts.length + " hosts · " + items + " items";
+        }
+        return "";
+      }
+
+      async function loadQueue() {
+        const out = $("#queue-out");
+        const meta = $("#q-meta");
+        meta.textContent = "";
+        out.textContent = "Loading…";
+        const { res, data } = await api("GET", "/" + currentQueue);
+        if (res.status === 401) return showLogin();
+        if (!res.ok) {
+          out.textContent = detail(data, "Failed to load queue");
+          return;
+        }
+        meta.textContent = currentQueue.replace("-", " ") + " · " + queueSize(data);
+        out.textContent = JSON.stringify(data, null, 2);
+      }
+
+      function escapeHtml(s) {
+        return String(s ?? "").replace(/[&<>"']/g, (c) => (
+          { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+        ));
+      }
+
+      boot();
+    </script>
+  </body>
+</html>

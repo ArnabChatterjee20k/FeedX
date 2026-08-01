@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 ADMIN_API_PASSWORD = os.environ.get("ADMIN_API_PASSWORD", None)
 API_SECRET = os.environ.get("API_SECRET", None)
 
+AUTH_COOKIE = "__feed_x_token"
+
 
 def _verify_env():
     if not all([ADMIN_API_PASSWORD, API_SECRET]):
@@ -24,8 +26,10 @@ def create_user(password):
 
 def check_user(encoded_jwt):
     _verify_env()
-    decoded = jwt.decode(encoded_jwt, API_SECRET, algorithms=["HS256"])
-    expiry = decoded.get("exp")
-    if datetime.now().timestamp() >= expiry:
+    if not encoded_jwt:
+        return None
+    try:
+        decoded = jwt.decode(encoded_jwt, API_SECRET, algorithms=["HS256"])
+    except jwt.PyJWTError:
         return None
     return decoded
