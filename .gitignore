@@ -13,5 +13,8 @@ wheels/
 .env
 .env.*
 !.env.example
+!tests/e2e/.env.e2e.example
+# Vendored Appwrite e2e stack config (throwaway dev defaults, safe to commit).
+!tests/e2e/appwrite/.env
 
 models/*

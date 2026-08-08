@@ -20,6 +20,21 @@ dependencies = [
 [project.scripts]
 feedx = "src.cli:cli"
 
+[dependency-groups]
+# e2e test tooling. `appwrite-console` bootstraps a throwaway project/key/db
+# (Console operations a project API key can't perform). Install with:
+#   uv sync --group dev
+dev = [
+    "pytest>=8.0",
+    "appwrite-console>=0.3.0",
+]
+
+[tool.pytest.ini_options]
+# tests import the app as `from src.api import create_api`, so put the repo root
+# (this dir) on the path. e2e tests self-skip when console creds are absent.
+pythonpath = ["."]
+testpaths = ["tests"]
+
 [tool.uv.sources]
 scout = { git = "https://github.com/ArnabChatterjee20k/Scout.git" }
 domdistill = { git = "https://github.com/ArnabChatterjee20k/domdistill.git" }

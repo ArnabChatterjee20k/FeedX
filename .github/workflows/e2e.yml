@@ -1,0 +1,65 @@
+name: e2e
+
+# Runs the Appwrite-backed end-to-end suite against a throwaway Appwrite stack
+# (tests/e2e/appwrite) spun up in-job. Triggers on pushes/PRs to master.
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+# Console user for the throwaway instance (created on first login by the tests).
+# Not secrets — this Appwrite is ephemeral and destroyed with the runner.
+env:
+  APPWRITE_CONSOLE_ENDPOINT: http://localhost/v1
+  APPWRITE_CONSOLE_EMAIL: e2e@feedx.test
+  APPWRITE_CONSOLE_PASSWORD: feedx-e2e-password
+  E2E_ADMIN_PASSWORD: e2e-admin-pass
+  E2E_API_SECRET: e2e-secret-key
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start Appwrite (pinned 1.9.6)
+        working-directory: tests/e2e/appwrite
+        run: docker compose up -d
+
+      - name: Wait for Appwrite to be healthy
+        run: |
+          echo "Waiting for the appwrite container to pass its doctor healthcheck..."
+          for i in $(seq 1 60); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' appwrite 2>/dev/null || echo "starting")
+            echo "  [$i] appwrite: $status"
+            if [ "$status" = "healthy" ]; then
+              echo "Appwrite is healthy."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Appwrite did not become healthy in time"
+          docker compose -f tests/e2e/appwrite/docker-compose.yml logs appwrite --tail 100
+          exit 1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies (incl. dev group)
+        run: uv sync --group dev
+
+      - name: Run e2e tests
+        run: uv run pytest tests/e2e -v
+
+      - name: Dump Appwrite logs on failure
+        if: failure()
+        working-directory: tests/e2e/appwrite
+        run: docker compose logs --tail 200
+
+      - name: Tear down Appwrite
+        if: always()
+        working-directory: tests/e2e/appwrite
+        run: docker compose down -v
