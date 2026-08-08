@@ -32,13 +32,19 @@ from collections.abc import Coroutine
 from appwrite.query import Query
 from appwrite.id import ID
 from .auth import check_user, AUTH_COOKIE
-from fastapi import Query as RequestQuery, Depends, HTTPException, Cookie
+from fastapi import Query as RequestQuery, Depends, HTTPException, Cookie, Header
 
 
 async def is_valid_user(
     token: Annotated[str | None, Cookie(alias=AUTH_COOKIE)] = None,
+    authorization: Annotated[str | None, Header()] = None,
 ):
-    user = check_user(token)
+    # Authorization: Bearer <jwt> header or the cookie
+    bearer = None
+    if authorization and authorization.lower().startswith("bearer "):
+        bearer = authorization[7:].strip()
+
+    user = check_user(bearer or token)
     if not user:
         raise HTTPException(401, "invalid user")
     return user

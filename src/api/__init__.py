@@ -52,7 +52,10 @@ def create_api():
             samesite="lax",
             max_age=30 * 24 * 60 * 60,
         )
-        return {"status": "success"}
+        # `token` is also returned in the body so cross-origin clients (e.g. the
+        # openfeed static site) can store it and send it as a Bearer header — the
+        # httponly cookie can't be read by JS and isn't sent cross-site.
+        return {"status": "success", "token": user}
 
     @app.post("/logout")
     def logout_user(response: Response):
