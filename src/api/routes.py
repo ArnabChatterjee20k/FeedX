@@ -1,6 +1,13 @@
 from fastapi import APIRouter, HTTPException
 from ..database import get_database, APPWRITE_DATABASE_ID, get_read_all_permission
-from ..database.models import URL, Hostname, CrawlState
+from ..database.models import (
+    URL,
+    Hostname,
+    Content,
+    CrawlState,
+    Interaction,
+    get_weight,
+)
 from .models import (
     SourceRequest,
     SourceResponse,
@@ -10,6 +17,11 @@ from .models import (
     HostnameListRequest,
     HostnameResponse,
     HostnameListResponse,
+    ContentInteractionRequest,
+    ContentInteractionResponse,
+    ContentListRequest,
+    ContentResponse,
+    ContentListResponse,
 )
 from urllib.parse import urlsplit
 import asyncio
@@ -269,6 +281,85 @@ async def retry_source(id: str):
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
     return SourceResponse(**result)
+
+
+@router.post("/interactions", response_model=ContentInteractionResponse)
+async def add_interaction(body: ContentInteractionRequest):
+    tags = list(set(body.tags))
+    if not tags:
+        raise HTTPException(status_code=400, detail="No tags provided")
+
+    weight = get_weight(body.interaction)
+    interactions = [
+        {
+            "$id": ID.unique(),
+            "content_id": body.id,
+            "tag": tag,
+            "type": body.interaction.value,
+            "weight": weight,
+        }
+        for tag in tags
+    ]
+
+    def _create_interactions() -> dict:
+        try:
+            database.create_rows(DB_ID, Interaction.__name__, rows=interactions)
+            return {"ids": [interaction["$id"] for interaction in interactions]}
+        except Exception as e:
+            return {"error": str(e)}
+
+    result = await to_thread(_create_interactions)()
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return ContentInteractionResponse(interaction_ids=result["ids"])
+
+
+@router.get("/content")
+async def list_content(filters: Annotated[ContentListRequest, RequestQuery()]):
+    queries = [Query.order_desc("$createdAt"), Query.limit(filters.limit)]
+    if filters.before_id:
+        queries.append(Query.cursor_before(filters.before_id))
+    elif filters.after_id:
+        queries.append(Query.cursor_after(filters.after_id))
+
+    if filters.tag:
+        queries.append(Query.contains("tags", [filters.tag]))
+
+    for field in ["id", "url", "hostname", "pipeline_state"]:
+        value = getattr(filters, field)
+        if value is not None:
+            queries.append(Query.equal(field, [value]))
+
+    def _list_content():
+        try:
+            rows = database.list_rows(
+                DB_ID, Content.__name__, queries=queries, total="false"
+            )
+            return [{"id": row.id, **row.data} for row in rows.rows]
+        except Exception as e:
+            return {"error": str(e)}
+
+    contents = await to_thread(_list_content)()
+    if isinstance(contents, dict) and "error" in contents:
+        raise HTTPException(status_code=500, detail=contents["error"])
+    return ContentListResponse(
+        data=[ContentResponse(**content) for content in contents]
+    )
+
+
+@router.get("/content/{id}", response_model=ContentResponse)
+async def get_content(id: str):
+    def _get_content():
+        try:
+            row = database.get_row(DB_ID, Content.__name__, row_id=id)
+            return {"id": row.id, **row.data}
+        except Exception as e:
+            return {"error": str(e)}
+
+    content = await to_thread(_get_content)()
+    if "error" in content:
+        raise HTTPException(status_code=500, detail=content["error"])
+    return ContentResponse(**content)
 
 
 # queue states retrieval

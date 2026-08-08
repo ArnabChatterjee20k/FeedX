@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Literal
+from ..database.models import InteractionType
 
 type URLKind = Literal["source", "url"]
 
@@ -67,3 +68,43 @@ class HostnameResponse(BaseModel):
 
 class HostnameListResponse(BaseModel):
     data: list[HostnameResponse]
+
+
+class ContentInteractionRequest(BaseModel):
+    id: str
+    interaction: InteractionType
+    tags: list[str]
+
+
+class ContentInteractionResponse(BaseModel):
+    interaction_ids: list[str]
+
+
+class ContentListRequest(BaseModel):
+    id: str | None = None
+    url: str | None = None
+    hostname: str | None = None
+    tag: str | None = None
+    pipeline_state: str | None = None
+    after_id: str | None = None
+    before_id: str | None = None
+    limit: int = 20
+
+
+class ContentResponse(BaseModel):
+    id: str
+    url: str
+    hostname: str
+    title: str | None = None
+    summary: str | None = None
+    tags: list[str] = []
+    score: float = 0
+    pipeline_state: str
+    pipeline_error: str | None = None
+    scraped_at: datetime | None = None
+    last_shown_at: datetime | None = None
+    last_seen_at: datetime | None = None
+
+
+class ContentListResponse(BaseModel):
+    data: list[ContentResponse]
