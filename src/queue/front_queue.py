@@ -82,6 +82,7 @@ class FrontQueue(Queue):
                     [
                         Query.equal("crawl_state", str(CrawlState.QUEUED.value)),
                         Query.equal("crawl_state", str(CrawlState.RETRY.value)),
+                        Query.equal("crawl_state", str(CrawlState.FETCHING.value)),
                     ]
                 ),
                 Query.limit(limit),

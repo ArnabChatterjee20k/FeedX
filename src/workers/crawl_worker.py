@@ -7,7 +7,14 @@ from .worker import Worker
 from ..database import get_database, APPWRITE_DATABASE_ID
 from appwrite.query import Query
 from appwrite.id import ID
-from ..database.models import CrawlState, URL, Content, ContentPipelineState, Hostname
+from ..database.models import (
+    CrawlState,
+    URL,
+    Content,
+    ContentPipelineState,
+    Hostname,
+    CrawlRun,
+)
 from ..discovery import is_ignored
 from ..queue.models import URLRow
 import os, random, re
@@ -22,6 +29,7 @@ import inspect
 crawl_id = os.environ.get("CRAWL_ID")
 
 HOSTNAME_LEASE_SECONDS = 10 * 60
+CLAIM_LEASE_SECONDS = int(os.environ.get("CLAIM_LEASE_SECONDS", 10 * 60))
 # stop a worker once no hostname has been due for this long, so a CI run doesn't
 # burn its whole timeout idling on hosts that are only cooling down.
 CRAWL_IDLE_TIMEOUT_SECONDS = int(os.environ.get("CRAWL_IDLE_TIMEOUT_SECONDS", 60))
@@ -38,6 +46,9 @@ class CrawlWorker(Worker):
         self._scout = Scout(browser_config=BrowserManagerConfig(headless=HEADLESS))
         self._url = None
         self._scheduled_item = None
+        self._crawl_stats = CrawlRun(
+            started_at=datetime.now(), github_action_run_id=crawl_id
+        )
 
     async def start(self):
         self._running = True
@@ -436,23 +447,38 @@ class CrawlWorker(Worker):
     def _claim(self, url_id, kind: str | None = None) -> tuple[bool, None | Exception]:
         try:
             database = get_database()
-            if kind == "source":
-                # a source recurs, so by now it may be SUCCESS/RETRY from a prior
-                # run. claim from any state EXCEPT an in-flight FETCHING, which
-                # keeps the claim atomic across parallel runners.
-                state_query = Query.not_equal(
-                    "crawl_state", str(CrawlState.FETCHING.value)
+            now = datetime.now(timezone.utc)
+            now_iso = now.isoformat()
+            lease_until = (now + timedelta(seconds=CLAIM_LEASE_SECONDS)).isoformat()
+
+            queries = [
+                Query.equal("$id", [url_id]),
+                Query.less_than_equal("next_crawl_at", now_iso),
+            ]
+            if kind != "source":
+                # url-kind: fresh work (QUEUED/RETRY) or an orphaned FETCHING to
+                # recover. SUCCESS/FAILED/BLOCKED are never re-claimed here.
+                queries.append(
+                    Query.equal(
+                        "crawl_state",
+                        [
+                            str(CrawlState.QUEUED.value),
+                            str(CrawlState.RETRY.value),
+                            str(CrawlState.FETCHING.value),
+                        ],
+                    )
                 )
-            else:
-                state_query = Query.equal(
-                    "crawl_state",
-                    [str(CrawlState.QUEUED.value), str(CrawlState.RETRY.value)],
-                )
+            # source: recurs from any state; the next_crawl_at lease guard alone
+            # already excludes an in-flight FETCHING, so no crawl_state restriction.
+
             result = database.update_rows(
                 APPWRITE_DATABASE_ID,
                 URL.__name__,
-                data={"crawl_state": str(CrawlState.FETCHING.value)},
-                queries=[Query.equal("$id", [url_id]), state_query],
+                data={
+                    "crawl_state": str(CrawlState.FETCHING.value),
+                    "next_crawl_at": lease_until,
+                },
+                queries=queries,
             )
             return len(result.rows) == 1, None
         except Exception as e:
@@ -461,11 +487,18 @@ class CrawlWorker(Worker):
     def _update_state(self, url_id, state: CrawlState) -> tuple[bool, None | Exception]:
         try:
             database = get_database()
+            data = {"crawl_state": str(state.value)}
+            # A claim leased next_crawl_at into the future; when we hand the url back
+            # for RETRY, clear that lease (set it to now) so the retry is eligible on
+            # the next run instead of being blocked until the lease expires. Retry
+            # backoff is thus decoupled from the crash-recovery lease.
+            if state == CrawlState.RETRY:
+                data["next_crawl_at"] = datetime.now(timezone.utc).isoformat()
             database.update_row(
                 database_id=APPWRITE_DATABASE_ID,
                 table_id=URL.__name__,
                 row_id=url_id,
-                data={"crawl_state": str(state.value)},
+                data=data,
             )
             return True, None
         except Exception as e:
@@ -739,3 +772,6 @@ class CrawlWorker(Worker):
             return url_rows_to_return, None
         except Exception as e:
             return [], e
+
+    def _update_stats():
+        pass
