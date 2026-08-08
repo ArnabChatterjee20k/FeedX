@@ -21,12 +21,11 @@ dependencies = [
 feedx = "src.cli:cli"
 
 [dependency-groups]
-# e2e test tooling. `appwrite-console` bootstraps a throwaway project/key/db
-# (Console operations a project API key can't perform). Install with:
-#   uv sync --group dev
+# e2e test tooling. The console bootstrap (project/key/db) is done over raw HTTP
+# with `requests` (pulled in transitively by the appwrite SDK), so only pytest is
+# needed here. Install with: uv sync --group dev
 dev = [
     "pytest>=8.0",
-    "appwrite-console>=0.3.0",
 ]
 
 [tool.pytest.ini_options]

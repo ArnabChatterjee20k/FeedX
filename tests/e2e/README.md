@@ -6,14 +6,18 @@ A true simulation of the admin API: HTTP requests go through the real FastAPI ap
 ## The bootstrap problem (and how it's solved)
 
 Provisioning a project, an API key, and a database are **Console** operations — a
-project API key can't do them. So the harness uses the Appwrite **Console** Python
-SDK ([`appwrite-console`](https://github.com/appwrite/sdk-for-console-python)) to:
+project API key can't do them. So the harness talks to the Console API directly over
+raw HTTP (`requests`, in `conftest.py`) to:
 
-1. log in a console user (email + password — the user is created if missing),
-2. reuse or create an organization,
-3. create a fresh throwaway **project**,
-4. mint a scoped **API key**,
-5. hand those to FeedX's own `init_database()` to build the schema.
+1. sign up + log in a console user (reading the session secret from the
+   `X-Appwrite-Session` response header — it isn't in the JSON body),
+2. create a fresh throwaway **project** — teams + `/v1/projects` on self-hosted,
+   organizations on Cloud (auto-detected by probing `/v1/organizations`),
+3. mint a scoped **API key**,
+4. hand those to FeedX's own `init_database()` to build the schema.
+
+(The `appwrite-console` SDK is Cloud-only — its project routes 404 on a self-hosted
+build and it hides the login response headers — so we don't use it.)
 
 Then the test drives `login → sources → hostnames → content → interactions → queues`
 and asserts against Appwrite directly. The project is **deleted on teardown**.

@@ -3,11 +3,13 @@ End-to-end test harness for the FeedX API — **Appwrite only**.
 
 The hard part of an e2e test against Appwrite is bootstrapping the account /
 project / API key / database, because those are *Console* operations (they
-authenticate as a Console user, not with a project API key). We solve that with
-the Appwrite **Console** Python SDK (`appwrite-console`, imported as
-`appwrite_console`): log in a console user with email+password, create a project,
-mint a scoped API key, then hand those credentials to the regular server SDK and
-FeedX's own `init_database()` to build the schema.
+authenticate as a Console user, not with a project API key). We do this over raw
+Console HTTP (`requests`): sign up + log in a console user (reading the session
+secret from the `X-Appwrite-Session` response header), create a project (teams +
+`/v1/projects` on self-hosted, organizations on Cloud — auto-detected), mint a
+scoped API key, then hand those credentials to the server SDK and FeedX's own
+`init_database()` to build the schema. (The appwrite-console SDK is Cloud-only:
+its project routes 404 on self-hosted and it hides the login response headers.)
 
 Everything is driven through the real FastAPI app via `TestClient`, so this is a
 true simulation: HTTP in, Appwrite rows out — no mocks.
@@ -31,6 +33,7 @@ plain `pytest` run on a machine without an Appwrite instance stays green.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 import uuid
@@ -90,91 +93,189 @@ def _short_id(prefix: str) -> str:
     return f"{prefix}{uuid.uuid4().hex[:16]}"
 
 
-# --- console bootstrap ------------------------------------------------------
+# --- console bootstrap (raw HTTP) -------------------------------------------
+# We hit the Console API directly with `requests` instead of the appwrite-console
+# SDK because that SDK targets Appwrite Cloud: it creates projects via the
+# `/v1/organization[s]` routes (Cloud-only — they 404 on a self-hosted build) and it
+# doesn't surface the login response headers where the session secret actually lives.
+# Raw HTTP lets us read `X-Appwrite-Session` and auto-detect the project model.
+
+APPWRITE_RESPONSE_FORMAT = "1.9.6"
+
+
+def _api(method: str, url: str, headers: dict, body: dict | None = None):
+    import requests
+
+    return requests.request(
+        method,
+        url,
+        headers=headers,
+        json=body,
+        verify=not CONSOLE_SELF_SIGNED,
+        allow_redirects=False,
+        timeout=30,
+    )
+
+
+def _ok(resp) -> bool:
+    return 200 <= resp.status_code < 300
+
+
+def _session_secret(resp) -> str:
+    """Appwrite returns the session secret via header/cookie, not the JSON body."""
+    header = resp.headers.get("x-appwrite-session")
+    if header:
+        return header
+    for name, value in resp.cookies.items():
+        if name.startswith("a_session_") and not name.endswith("_legacy"):
+            return value
+    fallback = resp.headers.get("x-fallback-cookies")
+    if fallback:
+        try:
+            for name, value in json.loads(fallback).items():
+                if name.startswith("a_session_"):
+                    return value
+        except Exception:
+            pass
+    return ""
 
 
 def _console_bootstrap() -> dict[str, str]:
-    """Create (or reuse) a project + API key + database via the Console SDK.
+    """Create a console user, project, and API key over raw Console HTTP.
 
-    Returns a dict with endpoint / project_id / api_key / database_id.
+    Works on self-hosted (teams + `/v1/projects`) and Cloud (organizations +
+    `/v1/organization/projects`) by probing for the organizations route.
+    Returns a dict with endpoint / project_id / api_key / database_id / session.
     """
-    from appwrite_console.client import Client
-    from appwrite_console.services.account import Account
-    from appwrite_console.services.organizations import Organizations
-    from appwrite_console.services.organization import Organization
-    from appwrite_console.services.project import Project
+    endpoint = CONSOLE_ENDPOINT.rstrip("/")
+    base = {
+        "x-appwrite-project": "console",
+        "x-appwrite-response-format": APPWRITE_RESPONSE_FORMAT,
+        "content-type": "application/json",
+        "accept": "application/json",
+    }
 
-    def _attr(obj, name, default=None):
-        """Read a field off a pydantic model *or* a plain dict response."""
-        if isinstance(obj, dict):
-            return obj.get(name, obj.get(f"${name}", default))
-        return getattr(obj, name, default)
+    # 1. ensure a console user (first signup becomes the console owner; 409 == exists).
+    signup = _api(
+        "post",
+        f"{endpoint}/account",
+        base,
+        {
+            "userId": _short_id("u"),
+            "email": CONSOLE_EMAIL,
+            "password": CONSOLE_PASSWORD,
+            "name": "E2E Runner",
+        },
+    )
+    if not _ok(signup) and signup.status_code != 409:
+        raise RuntimeError(f"account.create failed: HTTP {signup.status_code} {signup.text[:400]}")
 
-    client = Client().set_endpoint(CONSOLE_ENDPOINT).set_project("console")
-    if CONSOLE_SELF_SIGNED:
-        client.set_self_signed(True)
+    # 2. log in and capture the session secret from the response header/cookie.
+    login = _api(
+        "post",
+        f"{endpoint}/account/sessions/email",
+        base,
+        {"email": CONSOLE_EMAIL, "password": CONSOLE_PASSWORD},
+    )
+    if not _ok(login):
+        raise RuntimeError(f"login failed: HTTP {login.status_code} {login.text[:400]}")
+    secret = _session_secret(login)
+    if not secret:
+        raise RuntimeError("could not read session secret from login headers/cookies")
+    auth = {**base, "x-appwrite-session": secret, "cookie": f"a_session_console={secret}"}
 
-    account = Account(client)
-
-    # 1. ensure the console user exists (409 if already there -> ignore), then log in.
-    try:
-        account.create(_short_id("u"), CONSOLE_EMAIL, CONSOLE_PASSWORD, "E2E Runner")
-    except Exception:
-        pass
-    session = account.create_email_password_session(CONSOLE_EMAIL, CONSOLE_PASSWORD)
-    client.set_session(_attr(session, "secret"))
-
-    # 2. reuse the first organization, or create one (self-hosted free tier).
-    orgs = Organizations(client)
-    listing = orgs.list()
-    org_items = _attr(listing, "organizations") or _attr(listing, "teams") or []
-    if org_items:
-        org_id = _attr(org_items[0], "id") or _attr(org_items[0], "$id")
-    else:
-        org_id = _short_id("org")
-        orgs.create(org_id, "E2E Org", billing_plan="tier-0")
-
-    # 3. create a fresh project inside that org (org scoped via header).
-    client.set_organization(org_id)
-    org = Organization(client)
+    # 3. create a project, detecting the server's model.
     project_id = _short_id("prj")
-    project = org.create_project(project_id, "feedx-e2e")
-    project_id = _attr(project, "id") or project_id
+    orgs = _api("get", f"{endpoint}/organizations", auth)
+    if _ok(orgs):
+        # Cloud-style organizations.
+        items = orgs.json().get("organizations") or orgs.json().get("teams") or []
+        if items:
+            org_id = items[0]["$id"]
+        else:
+            org_id = _short_id("org")
+            r = _api(
+                "post",
+                f"{endpoint}/organizations",
+                auth,
+                {"organizationId": org_id, "name": "E2E Org", "billingPlan": "tier-0"},
+            )
+            if not _ok(r):
+                raise RuntimeError(f"organizations.create failed: HTTP {r.status_code} {r.text[:400]}")
+        proj = _api(
+            "post",
+            f"{endpoint}/organization/projects",
+            {**auth, "x-appwrite-organization": org_id},
+            {"projectId": project_id, "name": "feedx-e2e"},
+        )
+        if not _ok(proj):
+            raise RuntimeError(f"organization.create_project failed: HTTP {proj.status_code} {proj.text[:400]}")
+    else:
+        # Self-hosted: projects belong to a team, created via /v1/projects.
+        team = _api("post", f"{endpoint}/teams", auth, {"teamId": _short_id("team"), "name": "E2E Team"})
+        if not _ok(team):
+            raise RuntimeError(f"teams.create failed: HTTP {team.status_code} {team.text[:400]}")
+        team_id = team.json()["$id"]
+        proj = None
+        errors = []
+        for body in (
+            {"projectId": project_id, "name": "feedx-e2e", "teamId": team_id, "region": "default"},
+            {"projectId": project_id, "name": "feedx-e2e", "teamId": team_id},
+        ):
+            r = _api("post", f"{endpoint}/projects", auth, body)
+            if _ok(r):
+                proj = r
+                break
+            errors.append(f"HTTP {r.status_code} {r.text[:200]}")
+        if proj is None:
+            raise RuntimeError("projects.create failed:\n" + "\n".join(errors))
+    project_id = proj.json().get("$id", project_id)
 
-    # 4. mint an API key — Project.create_key is scoped by X-Appwrite-Project,
-    #    so point the client at the new project first.
-    client.set_project(project_id)
-    project_service = Project(client)
-    key = project_service.create_key(_short_id("key"), "feedx-e2e-key", DB_KEY_SCOPES)
-    api_key = _attr(key, "secret")
+    # 4. mint an API key (project-scoped route, with a project-header fallback).
+    key = None
+    errors = []
+    for path, headers in (
+        (f"/projects/{project_id}/keys", auth),
+        ("/project/keys", {**auth, "x-appwrite-project": project_id}),
+    ):
+        r = _api("post", f"{endpoint}{path}", headers, {"name": "feedx-e2e-key", "scopes": DB_KEY_SCOPES})
+        if _ok(r):
+            key = r
+            break
+        errors.append(f"{path}: HTTP {r.status_code} {r.text[:200]}")
+    if key is None:
+        raise RuntimeError("keys.create failed:\n" + "\n".join(errors))
+    api_key = key.json().get("secret")
     if not api_key:
-        raise RuntimeError("console create_key returned no secret")
+        raise RuntimeError(f"keys.create returned no secret: {key.text[:300]}")
 
     return {
-        "endpoint": CONSOLE_ENDPOINT,
+        "endpoint": endpoint,
         "project_id": project_id,
         "api_key": api_key,
         "database_id": _short_id("db"),
+        "session": secret,
     }
 
 
-def _delete_project(project_id: str) -> None:
-    from appwrite_console.client import Client
-    from appwrite_console.services.account import Account
-    from appwrite_console.services.project import Project
-
-    try:
-        client = Client().set_endpoint(CONSOLE_ENDPOINT).set_project("console")
-        if CONSOLE_SELF_SIGNED:
-            client.set_self_signed(True)
-        session = Account(client).create_email_password_session(
-            CONSOLE_EMAIL, CONSOLE_PASSWORD
-        )
-        secret = session.secret if hasattr(session, "secret") else session["secret"]
-        client.set_session(secret).set_project(project_id)
-        Project(client).delete()
-    except Exception as exc:  # teardown is best-effort
-        print(f"[e2e] project teardown failed for {project_id}: {exc}")
+def _delete_project(cfg: dict) -> None:
+    """Best-effort project teardown (the whole stack is torn down in CI anyway)."""
+    endpoint = cfg["endpoint"]
+    auth = {
+        "x-appwrite-project": "console",
+        "x-appwrite-response-format": APPWRITE_RESPONSE_FORMAT,
+        "content-type": "application/json",
+        "accept": "application/json",
+        "x-appwrite-session": cfg.get("session", ""),
+        "cookie": f"a_session_console={cfg.get('session', '')}",
+    }
+    pid = cfg["project_id"]
+    for path in (f"/projects/{pid}", f"/organization/projects/{pid}"):
+        try:
+            if _ok(_api("delete", f"{endpoint}{path}", auth)):
+                return
+        except Exception:
+            pass
 
 
 # --- schema readiness -------------------------------------------------------
@@ -228,10 +329,6 @@ def appwrite_env():
         pytest.skip(
             "console credentials missing — set APPWRITE_CONSOLE_ENDPOINT/EMAIL/PASSWORD"
         )
-    try:
-        import appwrite_console  # noqa: F401
-    except ImportError:
-        pytest.skip("appwrite-console not installed (uv sync --group dev)")
 
     cfg = _console_bootstrap()
 
@@ -256,7 +353,7 @@ def appwrite_env():
         yield cfg
     finally:
         if not KEEP_PROJECT:
-            _delete_project(cfg["project_id"])
+            _delete_project(cfg)
 
 
 @pytest.fixture(scope="session")
