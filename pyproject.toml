@@ -34,6 +34,9 @@ dev = [
 pythonpath = ["."]
 testpaths = ["tests"]
 
+# Fetch these over plain HTTP (GitHub source tarballs, pinned to a commit) instead of
+# `git+https`, so builders without the `git` binary (e.g. the Appwrite Sites /
+# openruntimes image) can still install them. Bump the SHA to upgrade.
 [tool.uv.sources]
-scout = { git = "https://github.com/ArnabChatterjee20k/Scout.git" }
-domdistill = { git = "https://github.com/ArnabChatterjee20k/domdistill.git" }
+scout = { url = "https://github.com/ArnabChatterjee20k/Scout/archive/ad6b4b85a9180f52f5cb4a42f7b724787d15af7f.tar.gz" }
+domdistill = { url = "https://github.com/ArnabChatterjee20k/domdistill/archive/56eb5b18afbb774324843708f041c76c8b6d3930.tar.gz" }
