@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -12,6 +13,12 @@ from .auth import create_user, AUTH_COOKIE
 logger = get_logger("API")
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+def _cors_origins() -> list[str]:
+    raw = os.environ.get("FRONTEND_URL", "")
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
 
 # @asynccontextmanager
 # async def lifespan(app):
@@ -31,10 +38,15 @@ def create_api():
     # use a lifespan and run it there and it would be blocking as its async function
     # init_database()
     app = FastAPI()
+    # Restrict CORS to the configured frontend origin(s). When FRONTEND_URL names
+    # explicit origins we can safely allow credentials; with the wildcard fallback
+    # we must not (browsers reject '*' + credentials). openfeed authenticates with a
+    # Bearer header, not cookies, so it doesn't need credentials cross-origin anyway.
+    origins = _cors_origins()
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=origins or ["*"],
+        allow_credentials=bool(origins),
         allow_methods=["*"],
         allow_headers=["*"],
     )
