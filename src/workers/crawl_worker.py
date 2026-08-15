@@ -29,6 +29,7 @@ import inspect
 crawl_id = os.environ.get("CRAWL_ID")
 
 HOSTNAME_LEASE_SECONDS = 10 * 60
+HOST_COOLDOWN_SECONDS = float(os.environ.get("HOST_COOLDOWN_SECONDS", 5 * 60 + 30))
 CLAIM_LEASE_SECONDS = int(os.environ.get("CLAIM_LEASE_SECONDS", 10 * 60))
 # stop a worker once no hostname has been due for this long, so a CI run doesn't
 # burn its whole timeout idling on hosts that are only cooling down.
@@ -132,7 +133,26 @@ class CrawlWorker(Worker):
                         f"Skipping {url.id}, already claimed by another worker/process",
                         tag="CLAIM_STATE",
                     )
+                    # the url was not claimed so the hostname shouldn't be leased at all
+                    # release hostname will make it queue again instead of sitting unavailable being leased
+                    released, release_err = await asyncio.to_thread(
+                        self._release_hostname, self._scheduled_item.id
+                    )
+                    if not released and release_err:
+                        self._logger.error(
+                            f"Failed to release hostname {hostname}",
+                            tag="RELEASE_HOSTNAME",
+                            error=release_err,
+                        )
+                    elif not released:
+                        # 0 rows -> our lease had already expired and someone else
+                        # owns the host now; leaving it alone is the correct outcome
+                        self._logger.info(
+                            f"Lease on {hostname} already expired, nothing to release",
+                            tag="RELEASE_HOSTNAME",
+                        )
                     # keep the host scheduled so its other urls still get processed
+                    self._scheduled_item.set_cooldown(0)
                     await self._scheduler_queue.push_async(self._scheduled_item)
                     continue
                 self._logger.error(
@@ -184,9 +204,7 @@ class CrawlWorker(Worker):
                 )
                 # bump the host cooldown up front so it applies on EVERY exit path
                 # (success or error) — the crawl hits the host either way.
-                FIVE_MINUTES = 5 * 60
-                OFFSET_SECONDS = 30
-                self._scheduled_item.add_seconds(FIVE_MINUTES + OFFSET_SECONDS)
+                self._scheduled_item.set_cooldown(HOST_COOLDOWN_SECONDS)
                 documents = await self._scout.crawl(url.url, config=config)
                 documents: list[Document] = list(
                     filter(lambda document: isinstance(document, Document), documents)
@@ -292,8 +310,13 @@ class CrawlWorker(Worker):
         self._running = False
         await self._scout.stop()
 
+    def _update_hostname_cooldown(self):
+        if self._scheduled_item.next_allowed_at <= datetime.now(timezone.utc):
+            self._scheduled_item.set_cooldown(HOST_COOLDOWN_SECONDS)
+
     async def complete(self):
         tasks: list[asyncio.Task] = []
+        self._update_hostname_cooldown()
         try:
             async with asyncio.TaskGroup() as tg:
                 t1 = tg.create_task(
@@ -335,6 +358,7 @@ class CrawlWorker(Worker):
             )
 
     async def error(self):
+        self._update_hostname_cooldown()
         try:
             tasks = []
             async with asyncio.TaskGroup() as tg:
@@ -438,6 +462,23 @@ class CrawlWorker(Worker):
                 queries=[
                     Query.equal("$id", [hostname_id]),
                     Query.less_than_equal("next_allowed_at", now.isoformat()),
+                ],
+            )
+            return len(result.rows) == 1, None
+        except Exception as e:
+            return False, e
+
+    def _release_hostname(self, hostname_id) -> tuple[bool, None | Exception]:
+        try:
+            database = get_database()
+            now = datetime.now(timezone.utc)
+            result = database.update_rows(
+                APPWRITE_DATABASE_ID,
+                Hostname.__name__,
+                data={"next_allowed_at": now.isoformat()},
+                queries=[
+                    Query.equal("$id", [hostname_id]),
+                    Query.greater_than("next_allowed_at", now.isoformat()),
                 ],
             )
             return len(result.rows) == 1, None
@@ -603,9 +644,7 @@ class CrawlWorker(Worker):
 
     async def _discover_source(self, url):
         try:
-            FIVE_MINUTES = 5 * 60
-            OFFSET_SECONDS = 30
-            self._scheduled_item.add_seconds(FIVE_MINUTES + OFFSET_SECONDS)
+            self._scheduled_item.set_cooldown(HOST_COOLDOWN_SECONDS)
             bumped, bump_err = await asyncio.to_thread(
                 self._bump_source_next_crawl, url.id
             )

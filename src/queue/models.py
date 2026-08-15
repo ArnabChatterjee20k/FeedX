@@ -43,5 +43,5 @@ class SchedulerQueueItem:
             ")"
         )
 
-    def add_seconds(self, seconds: int):
-        self.next_allowed_at += timedelta(seconds=seconds)
+    def set_cooldown(self, seconds: float):
+        self.next_allowed_at = datetime.now(timezone.utc) + timedelta(seconds=seconds)

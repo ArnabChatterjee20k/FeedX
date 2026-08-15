@@ -51,7 +51,7 @@ class FrontQueue(Queue):
 
     def _get_all_urls(self) -> list[URLRow]:
         database = get_database()
-        limit = os.environ.get("QUEUE_INIT_LIMIT", 1000)
+        limit = int(os.environ.get("QUEUE_INIT_LIMIT", 1000))
         now = datetime.now(timezone.utc).isoformat()
 
         # sources are pulled every run regardless of crawl_state so they recur
@@ -64,6 +64,7 @@ class FrontQueue(Queue):
             queries=[
                 Query.equal("kind", ["source"]),
                 Query.less_than_equal("next_crawl_at", now),
+                Query.order_asc("next_crawl_at"),
                 Query.limit(limit),
             ],
             total="false",
@@ -85,6 +86,7 @@ class FrontQueue(Queue):
                         Query.equal("crawl_state", str(CrawlState.FETCHING.value)),
                     ]
                 ),
+                Query.order_asc("next_crawl_at"),
                 Query.limit(limit),
             ],
             total="false",

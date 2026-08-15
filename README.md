@@ -129,21 +129,18 @@ stateDiagram-v2
     note right of COMPLETED: EXTRACTING / TAGGING states<br/>reserved for finer granularity
 ```
 
-## Concurrency — atomic claims
+## Optimistic concurrency control with timestamps in crawl_worker.py
 
-Every stage-to-stage hand-off is a conditional DB update; exactly one
-worker/process can win, which makes the pipeline safe to run with multiple
-workers and across parallel GitHub Action runners.
+Whenever we are starting a crawl we are starting a _lease on the hostname then _claim the url.
+Basically its nothing other than updating the timestamp of next_crawl_at to 10mins offset.
+The query is checking whether the url id is avaialable with the next_crawl_at in less than or equal to the current timestamp.
+If yes then that isn't captured by the other worker.
 
-| Level | Where | Transition (only if precondition holds) |
-|-------|-------|------------------------------------------|
-| Hostname | `CrawlWorker._lease_hostname` | `next_allowed_at <= now` → `now + 10m` |
-| URL | `CrawlWorker._claim` | `crawl_state in (QUEUED, RETRY)` → `FETCHING` |
-| Content | `ContentQueue._claim` | `pipeline_state == PENDING` → `SUMMARIZING` |
+Plus appwrite tablesdb use the mysql so update automatically holds a lock so suppose two updates happen concurrently then only 1 wins
+and get the returned update count as 1.
 
-> Known gap: a row claimed by a process that then crashes is never retried
-> (stale `FETCHING` / `SUMMARIZING`). A `claimed_at` timestamp + a reaper that
-> resets stale claims is a planned follow-up (see `plan.md`).
+If error or need to release the lease, then update to the current timestamp like happening for the hostname (_release_hostname).
+When we claim is false for a url claim, we are updating the timestamp to now so that it doesn't get rate limited and picked by the worker
 
 # Feed builder algo
 

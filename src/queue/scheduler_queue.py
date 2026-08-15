@@ -93,19 +93,45 @@ class SchedulerQueue(Queue):
 
     def _get_hostname_items(self, hostnames: list[str]):
         database = get_database()
-        queries = [
-            Query.equal("name", hostnames),
-            Query.less_than_equal(
-                "next_allowed_at", datetime.now(timezone.utc).isoformat()
-            ),
-            Query.select(["name", "next_allowed_at"]),
+        now = datetime.now(timezone.utc).isoformat()
+        # appwrite caps how many values a single equal() may carry and defaults an
+        # unbounded list_rows to 25 rows — without both the chunking and the explicit
+        # limit below, hosts past the 25th silently never get scheduled at all.
+        batch_size = 50
+        batches = [
+            hostnames[i : i + batch_size]
+            for i in range(0, len(hostnames), batch_size)
         ]
-        rows = database.list_rows(APPWRITE_DATABASE_ID, Hostname.__name__, queries)
-        return [
-            SchedulerQueueItem(
-                id=row.id,
-                hostname=row.data.get("name"),
-                next_allowed_at=datetime.fromisoformat(row.data.get("next_allowed_at")),
+        by_hostname: dict[str, SchedulerQueueItem] = {}
+        for batch in batches:
+            queries = [
+                Query.equal("name", batch),
+                Query.less_than_equal("next_allowed_at", now),
+                Query.select(["name", "next_allowed_at"]),
+                Query.order_asc("next_allowed_at"),
+                Query.limit(batch_size),
+            ]
+            rows = database.list_rows(
+                APPWRITE_DATABASE_ID, Hostname.__name__, queries, total="false"
             )
-            for row in rows.rows
-        ]
+            for row in rows.rows:
+                name = row.data.get("name")
+                item = SchedulerQueueItem(
+                    id=row.id,
+                    hostname=name,
+                    next_allowed_at=datetime.fromisoformat(
+                        row.data.get("next_allowed_at")
+                    ),
+                )
+                existing = by_hostname.get(name)
+                if existing is None:
+                    by_hostname[name] = item
+                    continue
+                self._logger.info(
+                    f"Duplicate hostname row for {name}, keeping the later cooldown",
+                    tag="DUPLICATE_HOSTNAME",
+                )
+                if item.next_allowed_at > existing.next_allowed_at:
+                    by_hostname[name] = item
+
+        return list(by_hostname.values())
