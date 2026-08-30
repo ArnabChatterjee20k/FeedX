@@ -1,10 +1,17 @@
 from enum import Enum
 from typing import Any, get_args, get_origin
 from datetime import datetime
+import time
 
 from appwrite.client import Client
 from appwrite.enums.tables_db_index_type import TablesDBIndexType
+from appwrite.exception import AppwriteException
 from appwrite.services.tables_db import TablesDB
+
+# appwrite rejects anything above this: "Index length is longer than the maximum: 767"
+MAX_INDEX_PREFIX_LENGTH = 767
+
+_ALREADY_EXISTS = 409
 
 
 class AppwriteSchemaBuilder:
@@ -15,9 +22,17 @@ class AppwriteSchemaBuilder:
     ):
         self.databases = TablesDB(client)
         self.database_id = database_id
+        self.failures: list[str] = []
 
     def get_database(self):
         return self.databases
+
+    def _record(self, kind: str, name: str, error: Exception) -> None:
+        if isinstance(error, AppwriteException) and error.code == _ALREADY_EXISTS:
+            print(f"= {kind} exists: {name}")
+            return
+        print(f"x {kind} FAILED: {name} -> {error}")
+        self.failures.append(f"{kind} {name}: {error}")
 
     def create_collection_from_dict(
         self,
@@ -100,6 +115,7 @@ class AppwriteSchemaBuilder:
                 )
 
         # Create indexes
+        self._drop_failed_indexes(collection_id)
         for field_name, unique, attr_type in fields_for_index:
             self._create_index(
                 collection_id=collection_id,
@@ -124,10 +140,10 @@ class AppwriteSchemaBuilder:
                 row_security=False,
             )
 
-            print(f"✓ Collection created: {collection_id}")
+            print(f"+ Collection created: {collection_id}")
 
         except Exception as e:
-            print(f"Collection exists or failed: " f"{collection_id} -> {e}")
+            self._record("Collection", collection_id, e)
 
     def _create_attribute(
         self,
@@ -269,10 +285,10 @@ class AppwriteSchemaBuilder:
             else:
                 print(f"Skipping unsupported field " f"{field_name}")
 
-            print(f"✓ Attribute: {field_name}")
+            print(f"+ Attribute: {field_name}")
 
         except Exception as e:
-            print(f"Attribute exists or failed " f"{field_name}: {e}")
+            self._record("Attribute", f"{collection_id}.{field_name}", e)
 
     # --------------------------------------------------
     # INDEX
@@ -286,7 +302,9 @@ class AppwriteSchemaBuilder:
         attr_type: str | None = None,
     ):
         try:
-            lengths = [768] if attr_type in {"string", "text"} else None
+            lengths = (
+                [MAX_INDEX_PREFIX_LENGTH] if attr_type in {"string", "text"} else None
+            )
             self.databases.create_index(
                 database_id=self.database_id,
                 table_id=collection_id,
@@ -296,10 +314,51 @@ class AppwriteSchemaBuilder:
                 lengths=lengths,
             )
 
-            print(f"✓ Index: {field_name}")
+            print(f"+ Index: {field_name}")
 
         except Exception as e:
-            print(f"Index exists or failed " f"{field_name}: {e}")
+            self._record("Index", f"{collection_id}.{field_name}", e)
+
+    def _drop_failed_indexes(self, collection_id: str) -> None:
+        """A failed index still exists, so create would 409 and never retry it."""
+        try:
+            indexes = self.databases.list_indexes(
+                database_id=self.database_id, table_id=collection_id
+            ).indexes
+        except Exception:
+            return
+
+        for index in indexes:
+            if "failed" not in str(index.status).lower():
+                continue
+            try:
+                self.databases.delete_index(
+                    database_id=self.database_id,
+                    table_id=collection_id,
+                    key=index.key,
+                )
+                print(f"~ dropped failed index: {collection_id}.{index.key}")
+            except Exception as e:
+                self._record("Index drop", f"{collection_id}.{index.key}", e)
+
+    def verify_indexes(self, collection_id: str, timeout: float = 90) -> None:
+        """Indexes build asynchronously; a unique index over duplicate rows fails here."""
+        deadline = time.monotonic() + timeout
+        while True:
+            indexes = self.databases.list_indexes(
+                database_id=self.database_id, table_id=collection_id
+            ).indexes
+            pending = [i for i in indexes if "processing" in str(i.status).lower()]
+            if not pending or time.monotonic() >= deadline:
+                break
+            time.sleep(2)
+
+        for index in indexes:
+            status = str(index.status).lower()
+            if "available" in status:
+                continue
+            error = getattr(index, "error", "") or f"status={index.status}"
+            self._record("Index build", f"{collection_id}.{index.key}", Exception(error))
 
     # --------------------------------------------------
     # TYPE RESOLUTION

@@ -94,8 +94,18 @@ def _create_schema_builder() -> AppwriteSchemaBuilder:
 
 def init_database():
     db = _create_schema_builder()
-    for model in [Hostname, URL, Content, CrawlRun, Interaction, TagScore]:
+    models = [Hostname, URL, Content, CrawlRun, Interaction, TagScore]
+    for model in models:
         db.create_collection_from_dict(_model_to_collection_schema(model))
+
+    for model in models:
+        db.verify_indexes(model.__name__)
+
+    if db.failures:
+        raise RuntimeError(
+            "schema init finished with "
+            f"{len(db.failures)} failure(s):\n  " + "\n  ".join(db.failures)
+        )
 
 
 def get_database():
