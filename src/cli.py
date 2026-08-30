@@ -24,6 +24,35 @@ def init():
     init_database()
 
 
+@cli.command("dedupe")
+def dedupe_cmd(
+    apply: bool = typer.Option(
+        False, "--apply", help="actually delete; without it this only reports"
+    ),
+    table: list[str] = typer.Option(None, help="limit to these tables"),
+):
+    """Collapse rows duplicating a unique column. Run before `init` rebuilds indexes."""
+    from .database.dedupe import dedupe
+
+    report = dedupe(apply=apply, tables=list(table) if table else None)
+
+    for name, entry in report["tables"].items():
+        typer.echo(f"\n{name}")
+        typer.echo(f"  rows                {entry['rows']}")
+        typer.echo(f"  distinct            {entry['distinct']}")
+        typer.echo(f"  duplicated values   {entry['duplicated_values']}")
+        typer.echo(f"  rows to delete      {entry['to_delete']}")
+        for count, value in entry["worst"]:
+            typer.echo(f"    {count:>4}x  {value}")
+        if entry["deleted"]:
+            typer.echo(f"  DELETED             {entry['deleted']}")
+        for err in entry["errors"][:10]:
+            typer.echo(f"  error: {err}", err=True)
+
+    if not apply:
+        typer.echo("\nDRY RUN — nothing deleted. Re-run with --apply.")
+
+
 @cli.command("sync-secrets")
 def sync_secrets_cmd(
     repo: str = typer.Option(

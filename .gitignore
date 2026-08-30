@@ -18,3 +18,5 @@ wheels/
 !tests/e2e/appwrite/.env
 
 models/*
+backup/
+

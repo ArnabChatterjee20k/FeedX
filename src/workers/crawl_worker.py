@@ -573,10 +573,12 @@ class CrawlWorker(Worker):
                 all_chunk_3.append(chunks[2])
                 all_chunk_4.append(chunks[3])
 
-            rows = database.list_rows(
-                APPWRITE_DATABASE_ID,
-                Content.__name__,
-                queries=[
+            # unlimited here meant appwrite's default 25, so near-duplicate
+            # detection only ever compared against 25 existing contents
+            candidates = []
+            cursor = None
+            while True:
+                queries = [
                     Query.or_queries(
                         [
                             Query.equal("simhash", list(map(str, all_simhashes))),
@@ -587,12 +589,25 @@ class CrawlWorker(Worker):
                         ]
                     ),
                     Query.select(["simhash", "url"]),
-                ],
-                total="false",
-            )
+                    Query.limit(100),
+                ]
+                if cursor:
+                    queries.append(Query.cursor_after(cursor))
+                page = database.list_rows(
+                    APPWRITE_DATABASE_ID,
+                    Content.__name__,
+                    queries=queries,
+                    total="false",
+                ).rows
+                if not page:
+                    break
+                candidates.extend(page)
+                if len(page) < 100:
+                    break
+                cursor = page[-1].id
 
             existing_simhash_to_urls: dict[int, list[str]] = {}
-            for row in rows.rows:
+            for row in candidates:
                 row_data = row.data
                 existing_simhash = row_data.get("simhash")
                 if isinstance(existing_simhash, str) and existing_simhash.isdigit():
@@ -769,7 +784,13 @@ class CrawlWorker(Worker):
                 present_urls = database.list_rows(
                     APPWRITE_DATABASE_ID,
                     URL.__name__,
-                    queries=[Query.equal("url", batch), Query.select(["url"])],
+                    queries=[
+                        Query.equal("url", batch),
+                        Query.select(["url"]),
+                        # without this appwrite caps the response at 25, so a
+                        # 30-url batch re-created the overflow every run
+                        Query.limit(len(batch)),
+                    ],
                 )
                 for row in present_urls.rows:
                     seen.add(row.data.get("url"))

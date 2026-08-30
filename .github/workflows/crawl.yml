@@ -9,7 +9,7 @@ on:
     inputs:
       workers:
         description: number of crawl workers
-        default: "1"
+        default: "2"
 
 # don't overlap runs — a new run rebuilds the queues from the DB.
 concurrency:
@@ -21,8 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     # the workers loop until the queues drain / idle; this bounds the run. a hard
     # timeout can leave stale FETCHING rows (lease auto-expires in 10m; a reaper
-    # for stuck rows is a planned follow-up — see plan.md).
-    timeout-minutes: 30
+    # for stuck rows is a planned follow-up — see plan.md). keep this comfortably
+    # above WORKER_MAX_RUNTIME_SECONDS so the graceful stop always wins the race.
+    timeout-minutes: 70
     env:
       APPWRITE_ENDPOINT: ${{ secrets.APPWRITE_ENDPOINT }}
       APPWRITE_PROJECT_ID: ${{ secrets.APPWRITE_PROJECT_ID }}
@@ -30,9 +31,9 @@ jobs:
       APPWRITE_DATABASE_ID: ${{ secrets.APPWRITE_DATABASE_ID }}
       ENVIRONMENT: production
       CRAWL_ID: ${{ github.run_id }}
-      # stop gracefully before the 30m hard timeout so stop() can clean up (no
-      # stale FETCHING rows from a hard kill); idle-stop usually ends it sooner.
-      WORKER_MAX_RUNTIME_SECONDS: "1500"
+      # stop gracefully before the hard timeout so stop() can clean up (no stale
+      # FETCHING rows from a hard kill); idle-stop usually ends it sooner.
+      WORKER_MAX_RUNTIME_SECONDS: "3600"
       HEADLESS: "true" # required on the headless CI runner
       SOURCE_REFRESH_SECONDS: "21600" # 6h source re-discovery gate
     steps:
@@ -46,4 +47,4 @@ jobs:
         # the CDP port opens. Re-enable it so the browser starts.
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Run crawl pipeline
-        run: uv run python -m src.cli crawler crawl --workers "${{ github.event.inputs.workers || '1' }}"
+        run: uv run python -m src.cli crawler crawl --workers "${{ github.event.inputs.workers || '2' }}"

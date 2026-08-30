@@ -9,7 +9,7 @@ on:
     inputs:
       workers:
         description: number of content workers
-        default: "1"
+        default: "2"
 
 concurrency:
   group: content
@@ -50,7 +50,7 @@ jobs:
         # finished; on a cache hit the model is already present so no pull happens.
         run: docker compose -f docker-compsoe.yaml up -d --wait
       - name: Run content pipeline
-        run: uv run python -m src.cli content run --workers "${{ github.event.inputs.workers || '1' }}"
+        run: uv run python -m src.cli content run --workers "${{ github.event.inputs.workers || '2' }}"
       - name: Stop Ollama
         if: always()
         run: docker compose -f docker-compsoe.yaml down
