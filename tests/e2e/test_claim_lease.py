@@ -38,10 +38,16 @@ def _parse(value: str) -> datetime:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
-def _claim(url_id, kind):
+CRAWL_RUN_ID = "e2eclaimrun"
+
+
+def _claim(url_id, kind, crawl_run_id=CRAWL_RUN_ID):
+    from types import SimpleNamespace
     from src.workers.crawl_worker import CrawlWorker
 
-    return CrawlWorker._claim(None, url_id, kind)  # self is unused
+    # _claim reads self._crawl_run.id to stamp crawl_run_id, and nothing else
+    worker = SimpleNamespace(_crawl_run=SimpleNamespace(id=crawl_run_id))
+    return CrawlWorker._claim(worker, url_id, kind)
 
 
 def _update_state(url_id, state_value):
@@ -93,6 +99,17 @@ def test_claim_fresh_url_leases_and_marks_fetching(auth, db, appwrite_env):
     assert str(row["crawl_state"]) == str(FETCHING)
     # next_crawl_at pushed roughly a full lease into the future.
     assert _parse(row["next_crawl_at"]) > _now() + timedelta(seconds=_lease_seconds() / 2)
+    assert row["crawl_run_id"] == CRAWL_RUN_ID
+
+
+def test_claim_without_a_crawl_run_leaves_crawl_run_id_unset(auth, db, appwrite_env):
+    """start() may have failed; the claim must still work, just unattributed."""
+    dbid = appwrite_env["database_id"]
+    page = _create_url(auth, "url")
+
+    ok, err = _claim(page["id"], "url", crawl_run_id=None)
+    assert ok is True and err is None
+    assert _row(db, dbid, page["id"])["crawl_run_id"] is None
 
 
 def test_second_claim_on_live_lease_is_rejected(auth):
