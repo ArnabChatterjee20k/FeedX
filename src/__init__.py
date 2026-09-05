@@ -2,6 +2,7 @@ import os
 from .queue import init_queues
 from .workers.worker_pool import WorkerPool
 from .workers.crawl_worker import CrawlWorker
+from .telemetry.crawl_run import CrawlRunStats
 
 
 def _max_runtime() -> float | None:
@@ -12,8 +13,6 @@ def _max_runtime() -> float | None:
 
 
 def get_worker_pool(workers: int = 1):
-    from .workers.crawl_run import CrawlRunStats
-
     _, back_queue, scheduler_queue = init_queues()
     crawl_run = CrawlRunStats()
     crawl_run.start()

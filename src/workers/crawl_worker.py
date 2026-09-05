@@ -16,7 +16,7 @@ from ..database.models import (
 )
 from ..discovery import is_ignored
 from ..queue.models import URLRow
-from .crawl_run import CrawlRunStats
+from ..telemetry.crawl_run import CrawlRunStats
 import os, random, re
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urljoin, urlsplit, urldefrag
