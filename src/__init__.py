@@ -12,11 +12,16 @@ def _max_runtime() -> float | None:
 
 
 def get_worker_pool(workers: int = 1):
+    from .workers.crawl_run import CrawlRunStats
+
     _, back_queue, scheduler_queue = init_queues()
+    crawl_run = CrawlRunStats()
+    crawl_run.start()
     return WorkerPool(
-        lambda id: CrawlWorker(id, back_queue, scheduler_queue),
+        lambda id: CrawlWorker(id, back_queue, scheduler_queue, crawl_run),
         workers,
         max_runtime=_max_runtime(),
+        on_stop=crawl_run.finish,
     )
 
 

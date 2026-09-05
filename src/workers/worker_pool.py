@@ -10,6 +10,7 @@ class WorkerPool:
         worker_factory: Callable[[int], Worker],
         workers: int = 1,
         max_runtime: float | None = None,
+        on_stop: Callable[[], tuple[bool, None | Exception]] | None = None,
     ):
         self._factory = worker_factory
         self._workers_count = workers
@@ -18,6 +19,7 @@ class WorkerPool:
         self._stop_event = asyncio.Event()
         # graceful upper bound on a run; None = unbounded (rely on idle-stop)
         self._max_runtime = max_runtime
+        self._on_stop = on_stop
 
     def _worker_done(self, task: asyncio.Task):
         try:
@@ -76,4 +78,11 @@ class WorkerPool:
                     f"Exception in worker {worker._id}",
                     tag="WORKER_POOL",
                     error=task.exception(),
+                )
+
+        if self._on_stop:
+            stopped, err = await asyncio.to_thread(self._on_stop)
+            if not stopped:
+                self._logger.error(
+                    "Failed to run on_stop", tag="WORKER_POOL", error=err
                 )
