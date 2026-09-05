@@ -115,6 +115,7 @@ class AppwriteSchemaBuilder:
                 )
 
         # Create indexes
+        self._wait_for_columns(collection_id)
         self._drop_failed_indexes(collection_id)
         for field_name, unique, attr_type in fields_for_index:
             self._create_index(
@@ -318,6 +319,26 @@ class AppwriteSchemaBuilder:
 
         except Exception as e:
             self._record("Index", f"{collection_id}.{field_name}", e)
+
+    def _wait_for_columns(self, collection_id: str, timeout: float = 120) -> None:
+        """Columns are provisioned asynchronously; indexing one before it lands fails."""
+        deadline = time.monotonic() + timeout
+        while True:
+            columns = self.databases.list_columns(
+                database_id=self.database_id, table_id=collection_id
+            ).columns
+            pending = [c for c in columns if "processing" in str(c.status).lower()]
+            if not pending or time.monotonic() >= deadline:
+                break
+            time.sleep(2)
+
+        for column in columns:
+            if "available" in str(column.status).lower():
+                continue
+            error = getattr(column, "error", "") or f"status={column.status}"
+            self._record(
+                "Column", f"{collection_id}.{column.key}", Exception(error)
+            )
 
     def _drop_failed_indexes(self, collection_id: str) -> None:
         """A failed index still exists, so create would 409 and never retry it."""
