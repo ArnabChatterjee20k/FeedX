@@ -54,39 +54,24 @@ class SchedulerQueue(Queue):
                     timeout=timeout,
                 )
 
-                if self._queue[0].next_allowed_at <= datetime.now(timezone.utc):
-                    return self.pop()
-
                 # not using the condition notify here cause what if notify in that case isn't called? better to use sleep since its totally based on duration
-                # wait_timeout = min(
-                #     timeout,
-                #     (
-                #         self._queue[0].next_allowed_at - datetime.now(timezone.utc)
-                #     ).total_seconds(),
-                # )
-                # await asyncio.wait_for(
-                #     self._hostname_available_condition.wait_for(
-                #         lambda: self._queue[0].next_allowed_at
-                #         <= datetime.now(timezone.utc)
-                #     ),
-                #     timeout=wait_timeout,
-                # )
-                # return self.pop()
-
-                # popping it so that its not get used by the other worker
-                # if any issues happened then the database already has the item in current state and can be peaked
-                item_for_the_current_worker = self.pop()
-                if not self._queue:
-                    return item_for_the_current_worker
                 delay = (
                     self._queue[0].next_allowed_at - datetime.now(timezone.utc)
                 ).total_seconds()
 
+                # popping it so that its not get used by the other worker, but
+                # only once we know we can wait it out here — a pop we then drop
+                # loses the hostname from the heap for the rest of the run
+                item = self.pop() if delay <= timeout else None
+
             # releasing lock so that the item isn't blocked
-            if delay > timeout:
+            if item is None:
+                await asyncio.sleep(timeout)
                 return None
-            await asyncio.sleep(delay)
-            return item_for_the_current_worker
+
+            if delay > 0:
+                await asyncio.sleep(delay)
+            return item
 
         except asyncio.TimeoutError:
             return None
