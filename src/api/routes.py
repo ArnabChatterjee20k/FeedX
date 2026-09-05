@@ -188,10 +188,11 @@ async def list_hostnames(filters: Annotated[HostnameListRequest, RequestQuery()]
     elif filters.after_id:
         queries.append(Query.cursor_after(filters.after_id))
 
-    for field in ["id", "hostname"]:
+    # the request exposes id/hostname, the Hostname table stores $id/name
+    for field, column in (("id", "$id"), ("hostname", "name")):
         value = getattr(filters, field)
         if value is not None:
-            queries.append(Query.equal(field, [value]))
+            queries.append(Query.equal(column, [value]))
 
     def _list_hostnames():
         try:
