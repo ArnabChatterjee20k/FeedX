@@ -309,7 +309,11 @@ def _wait_for_tables_ready(
                     )
                     for c in columns
                 ]
-                if columns and all(s == "available" for s in statuses):
+                # the sdk returns a ColumnStatus enum, not a str, and it is not a
+                # str-enum - comparing it directly never matches
+                if columns and all(
+                    getattr(s, "value", s) == "available" for s in statuses
+                ):
                     continue  # this table is ready
             except Exception:
                 pass
