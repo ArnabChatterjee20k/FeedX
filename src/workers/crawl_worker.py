@@ -13,10 +13,10 @@ from ..database.models import (
     Content,
     ContentPipelineState,
     Hostname,
-    CrawlRun,
 )
 from ..discovery import is_ignored
 from ..queue.models import URLRow
+from ..telemetry.crawl_run import CrawlRunStats
 import os, random, re
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urljoin, urlsplit, urldefrag
@@ -31,25 +31,32 @@ crawl_id = os.environ.get("CRAWL_ID")
 HOSTNAME_LEASE_SECONDS = 10 * 60
 HOST_COOLDOWN_SECONDS = float(os.environ.get("HOST_COOLDOWN_SECONDS", 5 * 60 + 30))
 CLAIM_LEASE_SECONDS = int(os.environ.get("CLAIM_LEASE_SECONDS", 10 * 60))
-# stop a worker once no hostname has been due for this long, so a CI run doesn't
-# burn its whole timeout idling on hosts that are only cooling down.
-CRAWL_IDLE_TIMEOUT_SECONDS = int(os.environ.get("CRAWL_IDLE_TIMEOUT_SECONDS", 60))
+# stop a worker once no hostname has been due for this long. must stay above
+# HOST_COOLDOWN_SECONDS or every worker drains during the first cooldown gap,
+# when by definition no host is due yet.
+CRAWL_IDLE_TIMEOUT_SECONDS = int(
+    os.environ.get("CRAWL_IDLE_TIMEOUT_SECONDS", HOST_COOLDOWN_SECONDS + 60)
+)
 SOURCE_REFRESH_SECONDS = int(os.environ.get("SOURCE_REFRESH_SECONDS", 6 * 60 * 60))
 # headless by default so CI runners work; set HEADLESS=false locally to watch.
 HEADLESS = os.environ.get("HEADLESS", "true").lower() not in ("false", "0", "no")
 
 
 class CrawlWorker(Worker):
-    def __init__(self, id, back_queue: BackQueue, scheduler_queue: SchedulerQueue):
+    def __init__(
+        self,
+        id,
+        back_queue: BackQueue,
+        scheduler_queue: SchedulerQueue,
+        crawl_run: CrawlRunStats,
+    ):
         super().__init__(id)
         self._back_queue = back_queue
         self._scheduler_queue = scheduler_queue
         self._scout = Scout(browser_config=BrowserManagerConfig(headless=HEADLESS))
         self._url = None
         self._scheduled_item = None
-        self._crawl_stats = CrawlRun(
-            started_at=datetime.now(), github_action_run_id=crawl_id
-        )
+        self._crawl_run = crawl_run
 
     async def start(self):
         self._running = True
@@ -270,6 +277,7 @@ class CrawlWorker(Worker):
                             chunks=chunks,
                             scraped_at=datetime.now(timezone.utc),
                             pipeline_state=ContentPipelineState.PENDING,
+                            crawl_run_id=self._crawl_run.id,
                         )
                     )
                 chunks_created = False
@@ -317,6 +325,7 @@ class CrawlWorker(Worker):
     async def complete(self):
         tasks: list[asyncio.Task] = []
         self._update_hostname_cooldown()
+        self._crawl_run.record(True)
         try:
             async with asyncio.TaskGroup() as tg:
                 t1 = tg.create_task(
@@ -359,6 +368,7 @@ class CrawlWorker(Worker):
 
     async def error(self):
         self._update_hostname_cooldown()
+        self._crawl_run.record(False)
         try:
             tasks = []
             async with asyncio.TaskGroup() as tg:
@@ -512,13 +522,17 @@ class CrawlWorker(Worker):
             # source: recurs from any state; the next_crawl_at lease guard alone
             # already excludes an in-flight FETCHING, so no crawl_state restriction.
 
+            data = {
+                "crawl_state": str(CrawlState.FETCHING.value),
+                "next_crawl_at": lease_until,
+            }
+            if self._crawl_run.id:
+                data["crawl_run_id"] = self._crawl_run.id
+
             result = database.update_rows(
                 APPWRITE_DATABASE_ID,
                 URL.__name__,
-                data={
-                    "crawl_state": str(CrawlState.FETCHING.value),
-                    "next_crawl_at": lease_until,
-                },
+                data=data,
                 queries=queries,
             )
             return len(result.rows) == 1, None
@@ -817,6 +831,7 @@ class CrawlWorker(Worker):
                     next_crawl_at=now,
                     kind="url",
                     source=source,
+                    crawl_run_id=self._crawl_run.id,
                 ).model_dump()
                 row["crawl_state"] = str(CrawlState.QUEUED.value)
                 row["next_crawl_at"] = now
@@ -832,6 +847,3 @@ class CrawlWorker(Worker):
             return url_rows_to_return, None
         except Exception as e:
             return [], e
-
-    def _update_stats():
-        pass
