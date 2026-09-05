@@ -2,7 +2,6 @@ import os
 from datetime import datetime, timezone
 
 from appwrite.id import ID
-from appwrite.operator import Operator
 from scout.logger import get_logger
 
 from ..database import get_database, APPWRITE_DATABASE_ID
@@ -14,6 +13,9 @@ crawl_id = os.environ.get("CRAWL_ID")
 class CrawlRunStats:
     def __init__(self):
         self.id: str | None = None
+        self.urls_attempted = 0
+        self.urls_success = 0
+        self.urls_failed = 0
         self._logger = get_logger("CRAWL_RUN")
 
     def start(self) -> tuple[bool, None | Exception]:
@@ -39,26 +41,20 @@ class CrawlRunStats:
             self._logger.error("Failed to start crawl run", tag="START", error=e)
             return False, e
 
-    def record(self, success: bool) -> tuple[bool, None | Exception]:
-        if not self.id:
-            return True, None
-        try:
-            database = get_database()
-            data = {"urls_attempted": Operator.increment(1)}
-            if success:
-                data["urls_success"] = Operator.increment(1)
-            else:
-                data["urls_failed"] = Operator.increment(1)
-
-            database.update_row(
-                APPWRITE_DATABASE_ID, CrawlRun.__name__, self.id, data=data
-            )
-            return True, None
-        except Exception as e:
-            return False, e
+    def record(self, success: bool) -> None:
+        self.urls_attempted += 1
+        if success:
+            self.urls_success += 1
+        else:
+            self.urls_failed += 1
 
     def finish(self) -> tuple[bool, None | Exception]:
+        summary = (
+            f"attempted={self.urls_attempted} "
+            f"success={self.urls_success} failed={self.urls_failed}"
+        )
         if not self.id:
+            self._logger.info(f"Crawl run not recorded, {summary}", tag="FINISH")
             return True, None
         try:
             database = get_database()
@@ -66,9 +62,14 @@ class CrawlRunStats:
                 APPWRITE_DATABASE_ID,
                 CrawlRun.__name__,
                 self.id,
-                data={"finished_at": datetime.now(timezone.utc).isoformat()},
+                data={
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                    "urls_attempted": self.urls_attempted,
+                    "urls_success": self.urls_success,
+                    "urls_failed": self.urls_failed,
+                },
             )
-            self._logger.info(f"Finished crawl run {self.id}", tag="FINISH")
+            self._logger.info(f"Finished crawl run {self.id}, {summary}", tag="FINISH")
             return True, None
         except Exception as e:
             self._logger.error("Failed to finish crawl run", tag="FINISH", error=e)

@@ -325,6 +325,7 @@ class CrawlWorker(Worker):
     async def complete(self):
         tasks: list[asyncio.Task] = []
         self._update_hostname_cooldown()
+        self._crawl_run.record(True)
         try:
             async with asyncio.TaskGroup() as tg:
                 t1 = tg.create_task(
@@ -352,15 +353,7 @@ class CrawlWorker(Worker):
                         state=CrawlState.SUCCESS,
                     )
                 )
-                t4 = tg.create_task(
-                    self._retry(
-                        self._crawl_run.record,
-                        "UPDATE_CRAWL_RUN",
-                        "Failed to record crawl run stats",
-                        True,
-                    )
-                )
-                tasks.extend([t1, t2, t3, t4])
+                tasks.extend([t1, t2, t3])
 
         except ExceptionGroup as eg:
             errors = []
@@ -375,6 +368,7 @@ class CrawlWorker(Worker):
 
     async def error(self):
         self._update_hostname_cooldown()
+        self._crawl_run.record(False)
         try:
             tasks = []
             async with asyncio.TaskGroup() as tg:
@@ -403,15 +397,7 @@ class CrawlWorker(Worker):
                         state=CrawlState.RETRY,
                     )
                 )
-                t4 = tg.create_task(
-                    self._retry(
-                        self._crawl_run.record,
-                        "UPDATE_CRAWL_RUN",
-                        "Failed to record crawl run stats",
-                        False,
-                    )
-                )
-                tasks.extend([t1, t2, t3, t4])
+                tasks.extend([t1, t2, t3])
         except ExceptionGroup as eg:
             self._logger.error(
                 f"Failed to save crawl error state for {self._url.id}",
