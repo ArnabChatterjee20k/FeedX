@@ -232,13 +232,19 @@ def _console_bootstrap() -> dict[str, str]:
     project_id = proj.json().get("$id", project_id)
 
     # 4. mint an API key (project-scoped route, with a project-header fallback).
+    # keyId is required, the same way projectId and teamId are above.
+    key_body = {
+        "keyId": _short_id("key"),
+        "name": "feedx-e2e-key",
+        "scopes": DB_KEY_SCOPES,
+    }
     key = None
     errors = []
     for path, headers in (
         (f"/projects/{project_id}/keys", auth),
         ("/project/keys", {**auth, "x-appwrite-project": project_id}),
     ):
-        r = _api("post", f"{endpoint}{path}", headers, {"name": "feedx-e2e-key", "scopes": DB_KEY_SCOPES})
+        r = _api("post", f"{endpoint}{path}", headers, key_body)
         if _ok(r):
             key = r
             break
