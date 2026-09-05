@@ -16,7 +16,7 @@ true simulation: HTTP in, Appwrite rows out — no mocks.
 
 Required environment (see `tests/e2e/.env.e2e.example`):
 
-    APPWRITE_CONSOLE_ENDPOINT   e.g. http://localhost/v1  (defaults to APPWRITE_ENDPOINT)
+    APPWRITE_CONSOLE_ENDPOINT   e.g. http://localhost/v1  (must be a local host)
     APPWRITE_CONSOLE_EMAIL      a console user email (created if missing)
     APPWRITE_CONSOLE_PASSWORD   that user's password (>= 8 chars)
 
@@ -26,6 +26,7 @@ Optional:
     E2E_ADMIN_PASSWORD             admin password the API checks (default: e2e-admin-pass)
     E2E_API_SECRET                 JWT signing secret          (default: e2e-secret-key)
     E2E_KEEP_PROJECT               "true" to skip project teardown (debugging)
+    E2E_ALLOW_REMOTE_CONSOLE       "true" to target a non-local console (dangerous)
 
 If the console email/password are absent the whole e2e module is **skipped**, so a
 plain `pytest` run on a machine without an Appwrite instance stays green.
@@ -38,6 +39,7 @@ import os
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -53,9 +55,9 @@ except ImportError:
 
 # --- config pulled from the environment -----------------------------------
 
-CONSOLE_ENDPOINT = os.environ.get("APPWRITE_CONSOLE_ENDPOINT") or os.environ.get(
-    "APPWRITE_ENDPOINT"
-)
+# deliberately does NOT fall back to APPWRITE_ENDPOINT: that is the production
+# instance in a normal .env, and this suite creates and then deletes a project.
+CONSOLE_ENDPOINT = os.environ.get("APPWRITE_CONSOLE_ENDPOINT")
 CONSOLE_EMAIL = os.environ.get("APPWRITE_CONSOLE_EMAIL")
 CONSOLE_PASSWORD = os.environ.get("APPWRITE_CONSOLE_PASSWORD")
 CONSOLE_SELF_SIGNED = os.environ.get(
@@ -65,6 +67,33 @@ CONSOLE_SELF_SIGNED = os.environ.get(
 ADMIN_PASSWORD = os.environ.get("E2E_ADMIN_PASSWORD", "e2e-admin-pass")
 API_SECRET = os.environ.get("E2E_API_SECRET", "e2e-secret-key")
 KEEP_PROJECT = os.environ.get("E2E_KEEP_PROJECT", "false").lower() == "true"
+ALLOW_REMOTE_CONSOLE = (
+    os.environ.get("E2E_ALLOW_REMOTE_CONSOLE", "false").lower() == "true"
+)
+LOCAL_CONSOLE_HOSTS = {
+    "localhost",
+    "127.0.0.1",
+    "0.0.0.0",
+    "::1",
+    "host.docker.internal",
+    "appwrite",
+    "traefik",
+}
+
+
+def _assert_local_console(endpoint: str) -> None:
+    host = (urlsplit(endpoint).hostname or "").lower()
+    if ALLOW_REMOTE_CONSOLE or host in LOCAL_CONSOLE_HOSTS:
+        return
+    raise RuntimeError(
+        f"refusing to bootstrap e2e against non-local console host {host!r}.\n"
+        "this suite creates a project, writes a schema into it and deletes the "
+        "project on teardown, so it is only meant to run against the throwaway "
+        "stack in tests/e2e/appwrite.\n"
+        "set E2E_ALLOW_REMOTE_CONSOLE=true if you really mean to target a "
+        "remote instance."
+    )
+
 
 # Broad DB scopes so init_database() can build tables/columns/indexes and the API
 # can read/write rows. Raw strings are passed straight through by the SDK.
@@ -148,6 +177,7 @@ def _console_bootstrap() -> dict[str, str]:
     Returns a dict with endpoint / project_id / api_key / database_id / session.
     """
     endpoint = CONSOLE_ENDPOINT.rstrip("/")
+    _assert_local_console(endpoint)
     base = {
         "x-appwrite-project": "console",
         "x-appwrite-response-format": APPWRITE_RESPONSE_FORMAT,
