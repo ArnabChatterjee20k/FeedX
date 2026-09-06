@@ -353,7 +353,14 @@ class CrawlWorker(Worker):
                         state=CrawlState.SUCCESS,
                     )
                 )
-                tasks.extend([t1, t2, t3])
+                t4 = tg.create_task(
+                    self._retry(
+                        self._crawl_run.flush_if_due,
+                        "UPDATE_CRAWL_RUN",
+                        "Failed to flush crawl run stats",
+                    )
+                )
+                tasks.extend([t1, t2, t3, t4])
 
         except ExceptionGroup as eg:
             errors = []
@@ -397,7 +404,14 @@ class CrawlWorker(Worker):
                         state=CrawlState.RETRY,
                     )
                 )
-                tasks.extend([t1, t2, t3])
+                t4 = tg.create_task(
+                    self._retry(
+                        self._crawl_run.flush_if_due,
+                        "UPDATE_CRAWL_RUN",
+                        "Failed to flush crawl run stats",
+                    )
+                )
+                tasks.extend([t1, t2, t3, t4])
         except ExceptionGroup as eg:
             self._logger.error(
                 f"Failed to save crawl error state for {self._url.id}",
