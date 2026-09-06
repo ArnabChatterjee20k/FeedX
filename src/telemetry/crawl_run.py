@@ -9,6 +9,10 @@ from ..database.models import CrawlRun
 
 crawl_id = os.environ.get("CRAWL_ID")
 
+# counters are buffered, so an abrupt stop loses whatever has not been written
+# yet. flushing every N crawls bounds that to N instead of the whole run.
+FLUSH_EVERY = int(os.environ.get("CRAWL_RUN_FLUSH_EVERY", 10))
+
 
 class CrawlRunStats:
     def __init__(self):
@@ -16,6 +20,7 @@ class CrawlRunStats:
         self.urls_attempted = 0
         self.urls_success = 0
         self.urls_failed = 0
+        self._flushed_at = 0
         self._logger = get_logger("CRAWL_RUN")
 
     def start(self) -> tuple[bool, None | Exception]:
@@ -48,6 +53,32 @@ class CrawlRunStats:
         else:
             self.urls_failed += 1
 
+    def flush_if_due(self) -> tuple[bool, None | Exception]:
+        if self.urls_attempted - self._flushed_at < FLUSH_EVERY:
+            return True, None
+        return self._write()
+
+    def _write(self, finished_at: str | None = None) -> tuple[bool, None | Exception]:
+        if not self.id:
+            return True, None
+        data = {
+            "urls_attempted": self.urls_attempted,
+            "urls_success": self.urls_success,
+            "urls_failed": self.urls_failed,
+        }
+        if finished_at:
+            data["finished_at"] = finished_at
+        try:
+            database = get_database()
+            database.update_row(
+                APPWRITE_DATABASE_ID, CrawlRun.__name__, self.id, data=data
+            )
+            # only on success, so a failed flush is retried by the next one
+            self._flushed_at = self.urls_attempted
+            return True, None
+        except Exception as e:
+            return False, e
+
     def finish(self) -> tuple[bool, None | Exception]:
         summary = (
             f"attempted={self.urls_attempted} "
@@ -56,21 +87,10 @@ class CrawlRunStats:
         if not self.id:
             self._logger.info(f"Crawl run not recorded, {summary}", tag="FINISH")
             return True, None
-        try:
-            database = get_database()
-            database.update_row(
-                APPWRITE_DATABASE_ID,
-                CrawlRun.__name__,
-                self.id,
-                data={
-                    "finished_at": datetime.now(timezone.utc).isoformat(),
-                    "urls_attempted": self.urls_attempted,
-                    "urls_success": self.urls_success,
-                    "urls_failed": self.urls_failed,
-                },
-            )
+
+        written, err = self._write(finished_at=datetime.now(timezone.utc).isoformat())
+        if written:
             self._logger.info(f"Finished crawl run {self.id}, {summary}", tag="FINISH")
-            return True, None
-        except Exception as e:
-            self._logger.error("Failed to finish crawl run", tag="FINISH", error=e)
-            return False, e
+        else:
+            self._logger.error("Failed to finish crawl run", tag="FINISH", error=err)
+        return written, err
