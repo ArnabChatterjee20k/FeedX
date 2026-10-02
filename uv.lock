@@ -427,16 +427,17 @@ wheels = [
 [[package]]
 name = "domdistill"
 version = "0.1.0"
-source = { url = "https://github.com/ArnabChatterjee20k/domdistill/archive/56eb5b18afbb774324843708f041c76c8b6d3930.tar.gz" }
+source = { url = "https://github.com/ArnabChatterjee20k/domdistill/archive/36dd3ddea749624ca86e71e432675e539a0baa6f.tar.gz" }
 dependencies = [
     { name = "lxml" },
     { name = "sentence-transformers" },
     { name = "xxhash" },
 ]
-sdist = { hash = "sha256:7c6c5e7d695e7084666381c85113fe67f747c4c03782b34cbaf436c5eb4156b6" }
+sdist = { hash = "sha256:268275846be94742ef3e5b0241b7fc5b3157dc22e554983101ebef7ba8049ec9" }
 
 [package.metadata]
 requires-dist = [
+    { name = "laya", marker = "extra == 'laya'", specifier = ">=0.3.0" },
     { name = "lxml", specifier = ">=6.1.0" },
     { name = "psutil", marker = "extra == 'benchmark'", specifier = ">=6.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.0" },
@@ -445,7 +446,7 @@ requires-dist = [
     { name = "sentence-transformers", specifier = ">=5.4.1" },
     { name = "xxhash", specifier = ">=3.8.0" },
 ]
-provides-extras = ["dev", "benchmark"]
+provides-extras = ["dev", "benchmark", "laya"]
 
 [[package]]
 name = "email-validator"
@@ -657,14 +658,14 @@ dev = [
 requires-dist = [
     { name = "appwrite", specifier = ">=19.2.0" },
     { name = "black", specifier = ">=26.5.1" },
-    { name = "domdistill", url = "https://github.com/ArnabChatterjee20k/domdistill/archive/56eb5b18afbb774324843708f041c76c8b6d3930.tar.gz" },
+    { name = "domdistill", url = "https://github.com/ArnabChatterjee20k/domdistill/archive/36dd3ddea749624ca86e71e432675e539a0baa6f.tar.gz" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.139.0" },
     { name = "pydantic-ai", extras = ["openai"], specifier = ">=2.13.0" },
     { name = "pydantic-ai-slim", extras = ["openai"], specifier = ">=2.13.0" },
     { name = "pyjwt", specifier = ">=2.13.0" },
     { name = "pynacl", specifier = ">=1.6.2" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
-    { name = "scout", url = "https://github.com/ArnabChatterjee20k/Scout/archive/ad6b4b85a9180f52f5cb4a42f7b724787d15af7f.tar.gz" },
+    { name = "scout", url = "https://github.com/ArnabChatterjee20k/Scout/archive/799aa7e5fb218c1897acf8b23b028219cd0f6773.tar.gz" },
 ]
 
 [package.metadata.requires-dev]
@@ -2458,7 +2459,7 @@ wheels = [
 [[package]]
 name = "scout"
 version = "0.1.0"
-source = { url = "https://github.com/ArnabChatterjee20k/Scout/archive/ad6b4b85a9180f52f5cb4a42f7b724787d15af7f.tar.gz" }
+source = { url = "https://github.com/ArnabChatterjee20k/Scout/archive/799aa7e5fb218c1897acf8b23b028219cd0f6773.tar.gz" }
 dependencies = [
     { name = "cssselect" },
     { name = "domdistill" },
@@ -2470,7 +2471,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "sentence-transformers" },
 ]
-sdist = { hash = "sha256:61ab18cddc2c38e03acf1f48a47bcab2b3334d41db96d0162c95e822d2ea7ee1" }
+sdist = { hash = "sha256:a41c558187a9c3e70fd652391fdcc8dcfb4759db9da088c7d92302f8708e3ab4" }
 
 [package.metadata]
 requires-dist = [
@@ -2478,12 +2479,14 @@ requires-dist = [
     { name = "domdistill" },
     { name = "faiss-cpu", specifier = ">=1.13.2" },
     { name = "html-to-markdown", specifier = ">=3.1.0" },
+    { name = "laya", marker = "extra == 'laya'", specifier = ">=0.3.0" },
     { name = "lxml", specifier = ">=6.0.3" },
     { name = "playwright", specifier = ">=1.58.0" },
     { name = "pydantic-ai-slim", extras = ["google", "groq"], specifier = ">=1.77.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "sentence-transformers", specifier = ">=5.4.1" },
 ]
+provides-extras = ["laya"]
 
 [[package]]
 name = "secretstorage"

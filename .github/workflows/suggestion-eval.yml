@@ -1,0 +1,130 @@
+name: suggestion-eval
+
+# Compares suggestion rankers (algorithm vs tev1 vs laya) against the real
+# Appwrite data, READ-ONLY (writes nothing back). Runs entirely on the GitHub
+# runner: Ollama + tev1:0.8b are installed here, laya runs in-process on CPU.
+# Results go to the job summary, an artifact, and (on PRs) a sticky comment.
+
+on:
+  workflow_dispatch:
+    inputs:
+      methods:
+        description: "comma-separated methods"
+        default: "algorithm,tev1,laya"
+      window_days:
+        description: "candidate window (days)"
+        default: "7"
+      top_k:
+        description: "ranking depth for metrics"
+        default: "20"
+      max_candidates:
+        description: "cap candidates (one model call each for rerankers)"
+        default: "80"
+  pull_request:
+    paths:
+      - "src/eval/**"
+      - "src/cli.py"
+      - ".github/workflows/suggestion-eval.yml"
+
+concurrency:
+  group: suggestion-eval-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      APPWRITE_ENDPOINT: ${{ secrets.APPWRITE_ENDPOINT }}
+      APPWRITE_PROJECT_ID: ${{ secrets.APPWRITE_PROJECT_ID }}
+      APPWRITE_API_KEY: ${{ secrets.APPWRITE_API_KEY }}
+      APPWRITE_DATABASE_ID: ${{ secrets.APPWRITE_DATABASE_ID }}
+      ENVIRONMENT: production
+      SUGGESTION_EVAL_OLLAMA_HOST: http://localhost:11434
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      TOKENIZERS_PARALLELISM: "false"
+      SUGGESTION_EVAL_METHODS: ${{ github.event.inputs.methods || 'algorithm,tev1,laya' }}
+      SUGGESTION_EVAL_WINDOW_DAYS: ${{ github.event.inputs.window_days || '7' }}
+      SUGGESTION_EVAL_TOP_K: ${{ github.event.inputs.top_k || '20' }}
+      SUGGESTION_EVAL_MAX_CANDIDATES: ${{ github.event.inputs.max_candidates || '80' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-feedx
+
+      - name: Guard against missing Appwrite secrets
+        run: |
+          if [ -z "$APPWRITE_ENDPOINT" ] || [ -z "$APPWRITE_API_KEY" ]; then
+            echo "::error::Appwrite secrets are not configured for this workflow."
+            exit 1
+          fi
+
+      - name: Install laya (CPU torch) when selected
+        if: contains(env.SUGGESTION_EVAL_METHODS, 'laya')
+        run: |
+          uv pip install torch --index-url https://download.pytorch.org/whl/cpu
+          uv pip install laya
+
+      - name: Cache Hugging Face checkpoints
+        if: contains(env.SUGGESTION_EVAL_METHODS, 'laya')
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-laya-${{ runner.os }}
+
+      - name: Install and start Ollama
+        if: contains(env.SUGGESTION_EVAL_METHODS, 'tev1')
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve &
+          for i in $(seq 1 30); do
+            if curl -sf "$SUGGESTION_EVAL_OLLAMA_HOST/api/version" >/dev/null; then
+              echo "Ollama is up"; break
+            fi
+            sleep 2
+          done
+          ollama pull tev1:0.8b
+
+      - name: Run suggestion eval (read-only)
+        run: uv run python -m src.cli eval suggestions --markdown-out eval.md
+
+      - name: Publish to job summary
+        if: always()
+        run: |
+          if [ -f eval.md ]; then cat eval.md >> "$GITHUB_STEP_SUMMARY"; fi
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: suggestion-eval
+          path: eval.md
+
+      - name: Post / update PR comment
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let body = '';
+            try {
+              body = fs.readFileSync('eval.md', 'utf8');
+            } catch (err) {
+              body = '_Suggestion eval did not produce output; see the job logs._';
+            }
+            body += `\n\n_Read-only run on a CPU runner. ([run](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}))_`;
+            const marker = '<!-- suggestion-eval -->';
+            body += `\n${marker}`;
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.rest.issues.listComments({ owner, repo, issue_number });
+            const existing = comments.data.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }

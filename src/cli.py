@@ -12,11 +12,13 @@ crawler = typer.Typer()
 content = typer.Typer()
 sources = typer.Typer()
 hostnames = typer.Typer()
+evaluate = typer.Typer()
 
 cli.add_typer(crawler, name="crawler")
 cli.add_typer(content, name="content")
 cli.add_typer(sources, name="sources")
 cli.add_typer(hostnames, name="hostnames")
+cli.add_typer(evaluate, name="eval")
 
 
 @cli.command("init")
@@ -149,6 +151,68 @@ def content_run(workers: int = 1):
 @crawler.command("stats")
 def stats():
     pass
+
+
+@evaluate.command("suggestions")
+def eval_suggestions(
+    methods: str = typer.Option(
+        None,
+        help="comma-separated: algorithm,tev1,laya (env SUGGESTION_EVAL_METHODS)",
+    ),
+    window_days: int = typer.Option(
+        None, help="candidate window (env SUGGESTION_EVAL_WINDOW_DAYS, default 7)"
+    ),
+    top_k: int = typer.Option(
+        None, help="ranking depth for metrics (env SUGGESTION_EVAL_TOP_K, default 20)"
+    ),
+    interest_tags: int = typer.Option(
+        None, help="top interest tags in the reranker query (default 12)"
+    ),
+    max_candidates: int = typer.Option(
+        None,
+        help="cap candidates; rerankers do one model call each (default 80)",
+    ),
+    tev1_model: str = typer.Option(
+        None, help="Ollama tev1 model tag (default tev1:0.8b)"
+    ),
+    markdown_out: str = typer.Option(
+        None, help="also write the Markdown report to this path"
+    ),
+):
+    """Compare suggestion rankers (algorithm vs tev1 vs laya) read-only.
+
+    Writes nothing to the database. Needs Appwrite env configured; tev1 needs a
+    reachable Ollama (OLLAMA_URL / SUGGESTION_EVAL_OLLAMA_HOST), laya needs the
+    laya package installed.
+    """
+    import os
+
+    from .eval.suggestions import render_report, run_eval
+
+    methods_value = methods or os.environ.get(
+        "SUGGESTION_EVAL_METHODS", "algorithm,tev1,laya"
+    )
+    method_list = [m.strip() for m in methods_value.split(",") if m.strip()]
+
+    def _int(opt, env, default):
+        if opt is not None:
+            return opt
+        return int(os.environ.get(env, default))
+
+    outcome = run_eval(
+        methods=method_list,
+        window_days=_int(window_days, "SUGGESTION_EVAL_WINDOW_DAYS", 7),
+        top_k=_int(top_k, "SUGGESTION_EVAL_TOP_K", 20),
+        interest_tags=_int(interest_tags, "SUGGESTION_EVAL_INTEREST_TAGS", 12),
+        max_candidates=_int(max_candidates, "SUGGESTION_EVAL_MAX_CANDIDATES", 80),
+        tev1_model=tev1_model
+        or os.environ.get("SUGGESTION_EVAL_TEV1_MODEL", "tev1:0.8b"),
+    )
+    report = render_report(outcome)
+    typer.echo(report)
+    if markdown_out:
+        with open(markdown_out, "w", encoding="utf-8") as handle:
+            handle.write(report + "\n")
 
 
 if __name__ == "__main__":

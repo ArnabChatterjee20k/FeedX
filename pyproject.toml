@@ -38,5 +38,5 @@ testpaths = ["tests"]
 # `git+https`, so builders without the `git` binary (e.g. the Appwrite Sites /
 # openruntimes image) can still install them. Bump the SHA to upgrade.
 [tool.uv.sources]
-scout = { url = "https://github.com/ArnabChatterjee20k/Scout/archive/ad6b4b85a9180f52f5cb4a42f7b724787d15af7f.tar.gz" }
-domdistill = { url = "https://github.com/ArnabChatterjee20k/domdistill/archive/56eb5b18afbb774324843708f041c76c8b6d3930.tar.gz" }
+scout = { url = "https://github.com/ArnabChatterjee20k/Scout/archive/799aa7e5fb218c1897acf8b23b028219cd0f6773.tar.gz" }
+domdistill = { url = "https://github.com/ArnabChatterjee20k/domdistill/archive/36dd3ddea749624ca86e71e432675e539a0baa6f.tar.gz" }
