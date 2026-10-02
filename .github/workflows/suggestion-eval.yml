@@ -90,7 +90,14 @@ jobs:
           ollama pull tev1:0.8b
 
       - name: Run suggestion eval (read-only)
-        run: uv run python -m src.cli eval suggestions --markdown-out eval.md
+        # Also emit a blind hand-label sheet (labels.json) so you can judge
+        # relevance by hand when engagement labels are too sparse: download the
+        # artifact, fill in `relevant`, then `uv run python -m src.cli
+        # eval score-labels labels.json` locally (no DB, no models).
+        run: |
+          uv run python -m src.cli eval suggestions \
+            --markdown-out eval.md \
+            --export-labels labels.json
 
       - name: Publish to job summary
         if: always()
@@ -102,7 +109,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: suggestion-eval
-          path: eval.md
+          path: |
+            eval.md
+            labels.json
 
       - name: Post / update PR comment
         if: ${{ always() }}

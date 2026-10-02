@@ -19,8 +19,10 @@ too. Nothing is written back.
 
 from __future__ import annotations
 
+import json
 import math
 import os
+import random
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -423,3 +425,128 @@ def render_report(outcome: dict) -> str:
         lines.append(f"| {idx} | {title} | {tags} | {ranks} | {engaged} |")
     lines.append("")
     return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- #
+# Hand-labeling: export a blind label sheet, score it later (no DB, no models).
+# --------------------------------------------------------------------------- #
+def build_label_sheet(outcome: dict, pool_k: int) -> dict:
+    """Blind label sheet from a run: the union of each method's top ``pool_k``,
+    shuffled, with blank ``relevant`` fields. Method rankings are stored
+    separately (not next to each candidate) so labeling is not biased by rank."""
+    results: list[MethodResult] = outcome["results"]
+    succeeded = [r for r in results if r.ranking]
+
+    pool_ids: list[str] = []
+    seen: set[str] = set()
+    for res in succeeded:
+        for item in res.ranking[:pool_k]:
+            if item.content.id not in seen:
+                seen.add(item.content.id)
+                pool_ids.append(item.content.id)
+
+    content_by_id: dict[str, ContentWithId] = {}
+    for res in succeeded:
+        for item in res.ranking:
+            content_by_id.setdefault(item.content.id, item.content)
+
+    shuffled = pool_ids[:]
+    random.shuffle(shuffled)
+    candidates = []
+    for cid in shuffled:
+        c = content_by_id[cid]
+        candidates.append(
+            {
+                "id": cid,
+                "title": c.title or c.url,
+                "summary": (c.summary or "")[:600],
+                "tags": c.tags,
+                "relevant": None,  # <- set to 1 (would want suggested) or 0
+            }
+        )
+
+    return {
+        "instructions": (
+            "Set each candidate's 'relevant' to 1 if you'd want it suggested, "
+            "else 0. Leave null to count as not-relevant. Do NOT edit 'rankings'. "
+            "Then run: python -m src.cli eval score-labels <this file>."
+        ),
+        "generated_at": outcome["now"],
+        "window_days": outcome["window_days"],
+        "top_k": outcome["top_k"],
+        "pool_k": pool_k,
+        "interest_query": outcome["interest_query"],
+        "candidates": candidates,
+        # full ranking (ordered content ids) per method; unjudged ids score 0.
+        "rankings": {res.name: [i.content.id for i in res.ranking] for res in succeeded},
+    }
+
+
+def _metrics_from_order(
+    ordered_ids: list[str], gains: dict[str, float], k: int
+) -> dict[str, float]:
+    top = ordered_ids[:k]
+    pos = {cid: g for cid, g in gains.items() if g > 0}
+    hits = sum(1 for cid in top if gains.get(cid, 0.0) > 0)
+    precision = hits / len(top) if top else 0.0
+    recall = (hits / len(pos)) if pos else 0.0
+    gseq = [max(gains.get(cid, 0.0), 0.0) for cid in top]
+    idcg = _dcg(sorted(pos.values(), reverse=True)[:k])
+    ndcg = (_dcg(gseq) / idcg) if idcg > 0 else 0.0
+    return {"precision@k": precision, "recall@k": recall, "ndcg@k": ndcg}
+
+
+def score_label_sheet(labels: dict) -> str:
+    """Score a filled-in label sheet. Reads only the file — no DB, no models."""
+    k = int(labels.get("top_k", 20))
+    rankings: dict[str, list[str]] = labels.get("rankings", {})
+    gains = {
+        c["id"]: float(c["relevant"])
+        for c in labels.get("candidates", [])
+        if c.get("relevant") is not None
+    }
+    judged = len(gains)
+    positives = sum(1 for g in gains.values() if g > 0)
+
+    lines: list[str] = []
+    lines.append("# Suggestion ranker comparison — hand-labeled")
+    lines.append("")
+    lines.append(
+        f"- window: **{labels.get('window_days')} days** | pool_k: "
+        f"**{labels.get('pool_k')}** | top_k: **{k}**"
+    )
+    lines.append(f"- judged candidates: **{judged}** | marked relevant: **{positives}**")
+    lines.append(f"- interest profile: _{labels.get('interest_query') or 'n/a'}_")
+    lines.append("")
+    lines.append(f"## Quality vs. hand labels (@{k})")
+    lines.append("")
+    lines.append("| Method | Precision | Recall | NDCG |")
+    lines.append("|---|---|---|---|")
+    scored = []
+    for name, order in rankings.items():
+        m = _metrics_from_order(order, gains, k)
+        scored.append((name, m["ndcg@k"]))
+        lines.append(
+            f"| {name} | {m['precision@k']:.3f} | {m['recall@k']:.3f} | "
+            f"{m['ndcg@k']:.3f} |"
+        )
+    lines.append("")
+    if positives == 0:
+        lines.append(
+            "> ⚠️ Nothing marked relevant yet — set some `relevant: 1` in the sheet."
+        )
+    elif scored:
+        best = max(scored, key=lambda x: x[1])
+        lines.append(f"> **Best by NDCG@{k}: `{best[0]}` ({best[1]:.3f}).**")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def load_label_sheet(path: str) -> dict:
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def write_label_sheet(sheet: dict, path: str) -> None:
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(sheet, handle, indent=2, ensure_ascii=False)

@@ -178,6 +178,13 @@ def eval_suggestions(
     markdown_out: str = typer.Option(
         None, help="also write the Markdown report to this path"
     ),
+    export_labels: str = typer.Option(
+        None,
+        help="also write a blind hand-label sheet (JSON) to this path",
+    ),
+    pool_k: int = typer.Option(
+        None, help="top items per method in the label pool (default = top_k)"
+    ),
 ):
     """Compare suggestion rankers (algorithm vs tev1 vs laya) read-only.
 
@@ -187,7 +194,12 @@ def eval_suggestions(
     """
     import os
 
-    from .eval.suggestions import render_report, run_eval
+    from .eval.suggestions import (
+        build_label_sheet,
+        render_report,
+        run_eval,
+        write_label_sheet,
+    )
 
     methods_value = methods or os.environ.get(
         "SUGGESTION_EVAL_METHODS", "algorithm,tev1,laya"
@@ -213,6 +225,24 @@ def eval_suggestions(
     if markdown_out:
         with open(markdown_out, "w", encoding="utf-8") as handle:
             handle.write(report + "\n")
+    if export_labels:
+        sheet = build_label_sheet(
+            outcome, pool_k=pool_k or outcome["top_k"]
+        )
+        write_label_sheet(sheet, export_labels)
+        typer.echo(
+            f"\nWrote blind label sheet to {export_labels} "
+            f"({len(sheet['candidates'])} candidates). Fill in 'relevant', then "
+            f"`eval score-labels {export_labels}`."
+        )
+
+
+@evaluate.command("score-labels")
+def eval_score_labels(path: str = typer.Argument(..., help="filled label sheet JSON")):
+    """Score a hand-labeled sheet. Reads only the file — no DB, no models."""
+    from .eval.suggestions import load_label_sheet, score_label_sheet
+
+    typer.echo(score_label_sheet(load_label_sheet(path)))
 
 
 if __name__ == "__main__":
