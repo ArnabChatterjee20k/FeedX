@@ -18,7 +18,10 @@ concurrency:
 
 jobs:
   crawl:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04 on 2026-10-22, where Playwright 1.60 can't install
+    # Chromium ("Playwright does not support chromium on ubuntu26.04-x64"), and the userns
+    # step below is for 24.04's AppArmor. Move up once Playwright supports 26.04.
+    runs-on: ubuntu-24.04
     # the workers loop until the queues drain / idle; this bounds the run. a hard
     # timeout can leave stale FETCHING rows (lease auto-expires in 10m; a reaper
     # for stuck rows is a planned follow-up — see plan.md). keep this comfortably
@@ -48,3 +51,13 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Run crawl pipeline
         run: uv run python -m src.cli crawler crawl --workers "${{ github.event.inputs.workers || '2' }}"
+      - name: Ping Exploud on failure
+        if: failure()
+        uses: ./.github/actions/exploud
+        with:
+          endpoint: ${{ secrets.EXPLOUD_URL }}
+          token: ${{ secrets.EXPLOUD_TOKEN }}
+          source: feedx
+          title: Crawl failed
+          body: The daily crawl stopped. Tap for the run log.
+          url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
