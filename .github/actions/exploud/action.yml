@@ -1,0 +1,52 @@
+name: Ping Exploud
+description: Send a push to your phone through the Exploud notify function. Never fails the job.
+
+inputs:
+  title:
+    description: Notification title
+    required: true
+  body:
+    description: Notification body
+    required: false
+    default: ''
+  url:
+    description: https link opened on tap (must be on the function's ALLOWED_HOSTS)
+    required: false
+    default: ''
+  source:
+    description: Shown before the title, e.g. the repo name
+    required: false
+    default: ${{ github.event.repository.name }}
+  endpoint:
+    description: The notify function URL (secrets.EXPLOUD_URL)
+    required: false
+    default: ''
+  token:
+    description: Bearer token (secrets.EXPLOUD_TOKEN). Without it the step is skipped.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Ping Exploud
+      shell: bash
+      env:
+        EXPLOUD_URL: ${{ inputs.endpoint }}
+        EXPLOUD_TOKEN: ${{ inputs.token }}
+        TITLE: ${{ inputs.title }}
+        BODY: ${{ inputs.body }}
+        LINK: ${{ inputs.url }}
+        SOURCE: ${{ inputs.source }}
+      run: |
+        if [ -z "$EXPLOUD_TOKEN" ] || [ -z "$EXPLOUD_URL" ]; then
+          echo "EXPLOUD_URL or EXPLOUD_TOKEN is not set; skipping the ping."
+          exit 0
+        fi
+        jq -n --arg t "$TITLE" --arg b "$BODY" --arg u "$LINK" --arg s "$SOURCE" \
+          '{title: $t} + (if $b != "" then {body: $b} else {} end)
+                       + (if $u != "" then {url: $u} else {} end)
+                       + (if $s != "" then {source: $s} else {} end)' |
+        curl -fsS --max-time 20 -X POST "$EXPLOUD_URL" \
+          -H "Authorization: Bearer $EXPLOUD_TOKEN" -H "Content-Type: application/json" \
+          --data-binary @- || echo "::warning::Exploud ping failed"

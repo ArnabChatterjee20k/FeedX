@@ -36,4 +36,28 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-feedx
       - name: Build & publish feed
-        run: uv run python -m src.cli feed
+        id: feed
+        run: |
+          set -o pipefail  # keep a failed build failing through tee
+          uv run python -m src.cli feed 2>&1 | tee feed.log
+          echo "count=$(grep -oE 'Published [0-9]+ items' feed.log | grep -oE '[0-9]+' | tail -1)" >> "$GITHUB_OUTPUT"
+      - name: Ping Exploud with the new feed
+        if: success()
+        uses: ./.github/actions/exploud
+        with:
+          endpoint: ${{ secrets.EXPLOUD_URL }}
+          token: ${{ secrets.EXPLOUD_TOKEN }}
+          source: feedx
+          title: Today's feed is out
+          body: ${{ steps.feed.outputs.count && format('{0} new items on openfeed.', steps.feed.outputs.count) || 'The feed was published.' }}
+          url: https://openfeed.appwrite.network/
+      - name: Ping Exploud on failure
+        if: failure()
+        uses: ./.github/actions/exploud
+        with:
+          endpoint: ${{ secrets.EXPLOUD_URL }}
+          token: ${{ secrets.EXPLOUD_TOKEN }}
+          source: feedx
+          title: Feed build failed
+          body: Today's feed was not published. Tap for the run log.
+          url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

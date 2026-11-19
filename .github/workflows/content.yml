@@ -59,3 +59,13 @@ jobs:
         # user so actions/cache can read them in its post-run save step.
         if: always()
         run: sudo chown -R "$USER" .ollama-cache 2>/dev/null || true
+      - name: Ping Exploud on failure
+        if: failure()
+        uses: ./.github/actions/exploud
+        with:
+          endpoint: ${{ secrets.EXPLOUD_URL }}
+          token: ${{ secrets.EXPLOUD_TOKEN }}
+          source: feedx
+          title: Content pipeline failed
+          body: Summaries and tags were not written. Tap for the run log.
+          url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
